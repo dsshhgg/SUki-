@@ -53,10 +53,10 @@ jobs:
         cd $GITHUB_WORKSPACE/kernel
         curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" -o setup.sh
         bash setup.sh builtin || { echo "SETUP FAILED"; exit 1; }
-        # Fix: builtin branch requires SUSFS headers - provide stub
+        # Fix: builtin branch requires SUSFS headers - provide stubs
         if grep -q 'susfs.h' drivers/kernelsu/kernel_includes.h 2>/dev/null; then
           echo "// SUSFS stub for KSU builtin compat" > include/linux/susfs.h
-          echo "static inline int susfs_is_sus_enabled(void) { return 0; }" >> include/linux/susfs.h
+          echo "// SUSFS stub for KSU builtin compat" > include/linux/susfs_def.h
         fi
         echo "KSU driver check:"
         ls drivers/kernelsu/Makefile
