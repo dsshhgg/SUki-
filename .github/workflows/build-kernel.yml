@@ -53,12 +53,17 @@ jobs:
         cd $GITHUB_WORKSPACE/kernel
         curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" -o setup.sh
         bash setup.sh builtin || { echo "SETUP FAILED"; exit 1; }
-        # Fix: builtin branch requires SUSFS headers - provide stubs
-        if grep -q 'susfs.h' drivers/kernelsu/kernel_includes.h 2>/dev/null; then
-          echo "// SUSFS stub for KSU builtin compat" > include/linux/susfs.h
-          echo "// SUSFS stub for KSU builtin compat" > include/linux/susfs_def.h
-        fi
-        echo "KSU driver check:"
+        # Fix: Strip SUSFS dependency from builtin branch
+        cd $GITHUB_WORKSPACE/kernel
+        # Remove SUSFS includes
+        sed -i '/susfs.h/d' drivers/kernelsu/kernel_includes.h 2>/dev/null || true
+        # Remove SUSFS code from dispatch.c (everything between #ifdef CONFIG_KSU_SUSFS and corresponding #endif)
+        sed -i '/CONFIG_KSU_SUSFS/,/^#endif/d' drivers/kernelsu/supercall/dispatch.c 2>/dev/null || true
+        sed -i '/susfs/d' drivers/kernelsu/supercall/dispatch.c 2>/dev/null || true
+        # Fix fallthrough keyword for old kernels
+        for f in $(grep -rl 'fallthrough' drivers/kernelsu/ 2>/dev/null); do
+          sed -i '1s/^/#define fallthrough do {} while (0)\n/' "$f"
+        done
         ls drivers/kernelsu/Makefile
 
     - name: Configure kernel
