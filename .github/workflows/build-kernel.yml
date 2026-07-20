@@ -14,35 +14,36 @@ jobs:
     - name: Install deps
       run: |
         sudo apt-get update -qq
-        sudo apt-get install -y -qq flex bison bc libssl-dev gcc-aarch64-linux-gnu git curl
+        sudo apt-get install -y -qq flex bison bc libssl-dev gcc-aarch64-linux-gnu git curl python3
 
     - name: Clone kernel source
       run: |
         git clone --depth=1 --single-branch --branch raphael-p-oss \
           https://github.com/raphael-ubports/kernel_xiaomi_raphael_stock kernel
 
-    - name: Fix Python 2 scripts
+    - name: Fix compatibility issues
       run: |
-        cd $GITHUB_WORKSPACE/kernel/scripts
-        for f in *.py; do
-          if head -1 "$f" | grep -q "python" 2>/dev/null; then
-            sed -i '1s|#!/usr/bin/env python$|#!/usr/bin/env python3|' "$f"
-            sed -i '1s|#!/usr/bin/python$|#!/usr/bin/python3|' "$f"
-          fi
-        done
-        2to3 -w gcc-wrapper.py 2>/dev/null || true
-        # Manual fix for print statements if 2to3 not available
-        sed -i 's/print "\([^"]*\)"/print("\1")/' gcc-wrapper.py
-        sed -i 's/print \("[^"]*"\)/print(\1)/' gcc-wrapper.py
-        echo "=== Fixed gcc-wrapper.py head ==="
-        head -60 gcc-wrapper.py
+        cd $GITHUB_WORKSPACE/kernel
+        # Fix ALL Python 2 -> Python 3 issues in gcc-wrapper.py
+        sed -i 's/print \(.*\),$/print(\1, end=" ")/g' scripts/gcc-wrapper.py
+        sed -i 's/^\( *\)print \("[^"]*"\), \(.*\)$/\1print(\2, \3)/g' scripts/gcc-wrapper.py
+        sed -i 's/^\( *\)print \("[^"]*"\)$/\1print(\2)/g' scripts/gcc-wrapper.py
+        # Also fix the shebang
+        sed -i '1s|#!/usr/bin/env python|#!/usr/bin/env python3|' scripts/gcc-wrapper.py
+        echo "=== Fixed gcc-wrapper.py lines 50-85 ==="
+        sed -n '50,85p' scripts/gcc-wrapper.py
 
-    - name: Integrate SukiSU-Ultra (non-GKI)
+        # Fix yylloc multiple definition (GCC 12 vs old kernel)
+        for f in scripts/dtc/dtc-lexer.lex.c_shipped scripts/dtc/dtc-lexer.l; do
+          [ -f "$f" ] && sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/' "$f"
+        done
+
+    - name: Integrate SukiSU-Ultra
       run: |
         cd $GITHUB_WORKSPACE/kernel
         curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" -o setup.sh
         bash setup.sh builtin || { echo "FAIL"; exit 1; }
-        [ -L drivers/kernelsu ] && echo "OK: symlink" || { echo "MISSING symlink"; exit 1; }
+        [ -L drivers/kernelsu ] && echo "OK: symlink" || { echo "MISSING"; exit 1; }
 
     - name: Configure kernel
       run: |
@@ -56,15 +57,9 @@ jobs:
           echo "CONFIG_KALLSYMS=y"
           echo "CONFIG_KALLSYMS_ALL=y"
           echo "# CONFIG_CC_STACKPROTECTOR_STRONG is not set"
-          echo "# CONFIG_CC_STACKPROTECTOR is not set"
           echo "CONFIG_CC_STACKPROTECTOR_NONE=y"
-          echo "CONFIG_CC_STACKPROTECTOR_REGULAR=n"
         } >> .config
         make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
-        echo "=== Config checks ==="
-        grep "CONFIG_KSU" .config || echo "KSU MISSING"
-        grep "CONFIG_KALLSYMS" .config || echo "KALLSYMS MISSING"
-        grep "CONFIG_CC_STACKPROTECTOR" .config
 
     - name: Build kernel
       run: |
@@ -77,7 +72,7 @@ jobs:
           ls -la out/arch/arm64/boot/Image*
         else
           echo "BUILD FAILED"
-          grep -i "error\|Error" out/build.log | tail -20 || true
+          grep -i "error" out/build.log | tail -20 || true
           exit 1
         fi
 
