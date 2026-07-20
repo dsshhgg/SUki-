@@ -71,6 +71,11 @@ jobs:
           echo "CONFIG_KSU_MANUAL_HOOK=y" >> .config
         grep -q "CONFIG_KALLSYMS_ALL" .config || \
           echo "CONFIG_KALLSYMS_ALL=y" >> .config
+        # Disable LTO (needs Android NDK Clang, not available on stock clang)
+        sed -i 's|CONFIG_LTO_CLANG=y|# CONFIG_LTO_CLANG is not set|' .config 2>/dev/null || true
+        sed -i 's|CONFIG_LTO=y|# CONFIG_LTO is not set|' .config 2>/dev/null || true
+        echo "# CONFIG_LTO is not set" >> .config
+        echo "# CONFIG_LTO_CLANG is not set" >> .config
         make olddefconfig
         echo "=== KSU config ==="
         grep -i "ksu\|kallsyms" .config
