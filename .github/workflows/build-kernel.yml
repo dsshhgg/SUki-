@@ -24,19 +24,15 @@ jobs:
     - name: Fix compatibility issues
       run: |
         cd $GITHUB_WORKSPACE/kernel
-        # Fix ALL Python 2 -> Python 3 issues in gcc-wrapper.py
-        sed -i 's/print \(.*\),$/print(\1, end=" ")/g' scripts/gcc-wrapper.py
-        sed -i 's/^\( *\)print \("[^"]*"\), \(.*\)$/\1print(\2, \3)/g' scripts/gcc-wrapper.py
-        sed -i 's/^\( *\)print \("[^"]*"\)$/\1print(\2)/g' scripts/gcc-wrapper.py
-        # Also fix the shebang
-        sed -i '1s|#!/usr/bin/env python|#!/usr/bin/env python3|' scripts/gcc-wrapper.py
-        echo "=== Fixed gcc-wrapper.py lines 50-85 ==="
-        sed -n '50,85p' scripts/gcc-wrapper.py
-
         # Fix yylloc multiple definition (GCC 12 vs old kernel)
         for f in scripts/dtc/dtc-lexer.lex.c_shipped scripts/dtc/dtc-lexer.l; do
           [ -f "$f" ] && sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/' "$f"
         done
+        # Bypass gcc-wrapper.py (Python 2, not compatible with Python 3)
+        sed -i 's|^REAL_CC|#REAL_CC|' Makefile
+        sed -i 's|^CC.*=.*scripts/gcc-wrapper.py|CC = $(CROSS_COMPILE)gcc|' Makefile
+        echo "=== CC setting ==="
+        grep "^CC\|^REAL_CC" Makefile
 
     - name: Integrate SukiSU-Ultra
       run: |
