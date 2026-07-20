@@ -55,8 +55,8 @@ jobs:
         bash setup.sh builtin || { echo "SETUP FAILED"; exit 1; }
         # Fix: Strip SUSFS dependency from builtin branch
         cd $GITHUB_WORKSPACE/kernel
-        # Remove SUSFS includes
-        sed -i '/susfs.h/d' drivers/kernelsu/kernel_includes.h 2>/dev/null || true
+        # Remove SUSFS includes from kernel_includes.h
+        sed -i '/#include.*susfs/d' drivers/kernelsu/kernel_includes.h 2>/dev/null || true
         # Remove SUSFS code from dispatch.c (everything between #ifdef CONFIG_KSU_SUSFS and corresponding #endif)
         sed -i '/CONFIG_KSU_SUSFS/,/^#endif/d' drivers/kernelsu/supercall/dispatch.c 2>/dev/null || true
         sed -i '/susfs/d' drivers/kernelsu/supercall/dispatch.c 2>/dev/null || true
