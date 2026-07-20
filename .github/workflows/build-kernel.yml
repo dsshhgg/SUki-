@@ -53,42 +53,6 @@ jobs:
         cd $GITHUB_WORKSPACE/kernel
         curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" -o setup.sh
         bash setup.sh builtin || { echo "SETUP FAILED"; exit 1; }
-        # Fix: Create comprehensive SUSFS stub for builtin branch
-        cd $GITHUB_WORKSPACE/kernel
-        cat > include/linux/susfs.h << 'SUSFS_EOF'
-#ifndef _SUSFS_H
-#define _SUSFS_H
-#include <linux/susfs_def.h>
-static inline void susfs_init(void) {}
-static inline int susfs_start_sdcard_monitor_fn(void *a, void *b, void *c) { return 0; }
-static inline int susfs_add_sus_path(unsigned long a) { return 0; }
-static inline int susfs_add_sus_path_loop(unsigned long a) { return 0; }
-static inline int susfs_set_hide_sus_mnts_for_non_su_procs(unsigned long a) { return 0; }
-static inline int susfs_add_sus_kstat(unsigned long a) { return 0; }
-static inline int susfs_update_sus_kstat(unsigned long a) { return 0; }
-static inline int susfs_add_sus_kstat_statically(unsigned long a, unsigned long b) { return 0; }
-static inline int susfs_set_uname(unsigned long a) { return 0; }
-static inline int susfs_enable_log(unsigned long a) { return 0; }
-static inline int susfs_set_cmdline_or_bootconfig(unsigned long a) { return 0; }
-#endif
-SUSFS_EOF
-        cat > include/linux/susfs_def.h << 'SUSFS_DEF_EOF'
-#ifndef _SUSFS_DEF_H
-#define _SUSFS_DEF_H
-#define SUSFS_MAGIC 0xDEAD
-#define CMD_SUSFS_ADD_SUS_PATH 1
-#define CMD_SUSFS_ADD_SUS_PATH_LOOP 2
-#define CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS 3
-#define CMD_SUSFS_ADD_SUS_KSTAT 4
-#define CMD_SUSFS_UPDATE_SUS_KSTAT 5
-#define CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY 6
-#define CMD_SUSFS_SET_UNAME 7
-#define CMD_SUSFS_ENABLE_LOG 8
-#define CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG 9
-#endif
-SUSFS_DEF_EOF
-        # Fix fallthrough for old kernel
-        echo "#define fallthrough do {} while (0)" >> include/linux/compiler.h 2>/dev/null || true
         ls drivers/kernelsu/Makefile
 
     - name: Configure kernel
@@ -101,6 +65,7 @@ SUSFS_DEF_EOF
           echo "CONFIG_KSU=y" >> .config
         grep -q "CONFIG_KSU_MANUAL_HOOK" .config || \
           echo "CONFIG_KSU_MANUAL_HOOK=y" >> .config
+        echo "# CONFIG_KSU_SUSFS is not set" >> .config
         grep -q "CONFIG_KALLSYMS_ALL" .config || \
           echo "CONFIG_KALLSYMS_ALL=y" >> .config
         make olddefconfig
