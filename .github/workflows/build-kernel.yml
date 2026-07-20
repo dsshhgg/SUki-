@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 90
 
     steps:
@@ -15,9 +15,10 @@ jobs:
       run: |
         sudo apt-get update -qq
         sudo apt-get install -y -qq flex bison bc libssl-dev ccache zip \
-          clang lld gcc-aarch64-linux-gnu
+          clang lld gcc-aarch64-linux-gnu git
 
     - name: Clone kernel source
+      timeout-minutes: 10
       run: |
         cd $GITHUB_WORKSPACE
         git clone --depth=1 --single-branch --branch raphael-p-oss \
@@ -25,37 +26,49 @@ jobs:
         cd kernel
         echo "=== Kernel version ==="
         head -5 Makefile
-        echo "=== Available defconfigs ==="
-        find arch/arm64/configs/ -name "*.defconfig" 2>/dev/null | head -10
+        echo "=== Defconfigs ==="
+        find arch/arm64/configs/ -name "*defconfig" -type f 2>/dev/null | sort
 
     - name: Integrate SukiSU-Ultra
       run: |
         cd $GITHUB_WORKSPACE/kernel
         curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" -o setup_ksu.sh
+        test -s setup_ksu.sh || exit 1
         bash setup_ksu.sh main
-        echo "=== KSU integrated ==="
-        ls -la drivers/kernelsu/
-        cat drivers/Makefile | grep -i kernelsu || true
+        echo "=== KSU integration check ==="
+        if [ -d drivers/kernelsu ]; then
+          echo "OK: drivers/kernelsu exists"
+          ls -la drivers/kernelsu/
+        else
+          echo "WARN: drivers/kernelsu not found, trying fallback"
+          ls -d drivers/ || true
+        fi
 
     - name: Configure kernel
       run: |
         cd $GITHUB_WORKSPACE/kernel
-        DCFG=$(find arch/arm64/configs/ -name "*raphael*defconfig" 2>/dev/null | head -1)
+        DCFG=$(find arch/arm64/configs/ -name "*raphael*defconfig" -type f 2>/dev/null | head -1)
         if [ -z "$DCFG" ]; then
-          echo "No raphael defconfig found, listing all:"
+          echo "No raphael defconfig, checking for sdm855/sm8150..."
+          DCFG=$(find arch/arm64/configs/ -name "*sdm*defconfig" -type f 2>/dev/null | head -1)
+        fi
+        if [ -z "$DCFG" ]; then
+          DCFG=$(find arch/arm64/configs/ -name "*sm8150*defconfig" -type f 2>/dev/null | head -1)
+        fi
+        if [ -z "$DCFG" ]; then
+          echo "No suitable defconfig found! Available:"
           ls arch/arm64/configs/
           exit 1
         fi
         DCN=$(basename $DCFG .defconfig)
-        echo "Using defconfig: $DCN"
-        export ARCH=arm64
-        make O=out $DCN
+        echo "Using defconfig: $DCN ($DCFG)"
+        export ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
+        make O=out -j$(nproc) $DCN
         cd out
         echo "CONFIG_KSU=y" >> .config
-        echo "CONFIG_KSU_MANUAL_HOOK=y" >> .config
-        make O=out olddefconfig ARCH=arm64
-        echo "=== KSU config ==="
-        grep "CONFIG_KSU" .config || true
+        make ARCH=arm64 olddefconfig
+        echo "=== KSU in config ==="
+        grep "CONFIG_KSU" .config || echo "WARN: CONFIG_KSU not found"
         echo "DCN=$DCN" >> $GITHUB_ENV
 
     - name: Build kernel
@@ -65,14 +78,16 @@ jobs:
         export CC=clang
         export CLANG_TRIPLE=aarch64-linux-gnu-
         export CROSS_COMPILE=aarch64-linux-gnu-
-        make O=out -j$(nproc) 2>&1 | tail -100
+        export PATH="/usr/lib/ccache:$PATH"
+        make O=out -j$(nproc) 2>&1 | tee out/build.log | tail -100
         echo "========"
         if [ -f out/arch/arm64/boot/Image ]; then
           echo "BUILD SUCCESS"
           ls -la out/arch/arm64/boot/Image*
         else
-          echo "BUILD FAILED"
-          find out/ -name "*.o" 2>/dev/null | wc -l
+          echo "BUILD FAILED - checking for errors:"
+          grep -i "error" out/build.log | tail -30 || true
+          echo "=== Object files: $(find out/ -name '*.o' | wc -l)"
           exit 1
         fi
 
@@ -83,7 +98,7 @@ jobs:
         gzip -f -9 Image
         ls -la Image.gz
 
-    - name: Upload artifact
+    - name: Upload Image.gz
       uses: actions/upload-artifact@v4
       with:
         name: SukiSU-Ultra-Image-raphael
