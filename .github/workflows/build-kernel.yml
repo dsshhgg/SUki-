@@ -83,9 +83,7 @@ jobs:
     - name: Build kernel
       run: |
         cd $GITHUB_WORKSPACE/kernel
-        make O=out Image -j$(nproc) \
-          CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy \
-          2>&1 | tee out/build.log
+        make O=out Image -j$(nproc) 2>&1 | tee out/build.log
         echo "===== RESULT ====="
         if [ -f out/arch/arm64/boot/Image ]; then
           echo "BUILD SUCCESS"
