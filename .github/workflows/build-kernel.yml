@@ -25,9 +25,9 @@ jobs:
           https://github.com/raphael-ubports/kernel_xiaomi_raphael_stock kernel
         cd kernel
         echo "=== Kernel version ==="
-        head -5 Makefile
+        grep -E "^VERSION|^PATCHLEVEL|^SUBLEVEL|^NAME" Makefile | head -10
         echo "=== Defconfigs ==="
-        find arch/arm64/configs/ -name "*defconfig" -type f 2>/dev/null | sort
+        find arch/arm64/configs/ -name "*.defconfig" -type f 2>/dev/null | sort
 
     - name: Integrate SukiSU-Ultra
       run: |
@@ -47,38 +47,33 @@ jobs:
     - name: Configure kernel
       run: |
         cd $GITHUB_WORKSPACE/kernel
-        DCFG=$(find arch/arm64/configs/ -name "*raphael*defconfig" -type f 2>/dev/null | head -1)
-        if [ -z "$DCFG" ]; then
-          echo "No raphael defconfig, checking for sdm855/sm8150..."
-          DCFG=$(find arch/arm64/configs/ -name "*sdm*defconfig" -type f 2>/dev/null | head -1)
+        # Use the raphael_user_defconfig from the repo
+        DCFG="arch/arm64/configs/raphael_user_defconfig"
+        if [ ! -f "$DCFG" ]; then
+          echo "raphael_user_defconfig not found, searching..."
+          DCFG=$(find arch/arm64/configs/ -name "*raphael*defconfig" -type f 2>/dev/null | head -1)
         fi
-        if [ -z "$DCFG" ]; then
-          DCFG=$(find arch/arm64/configs/ -name "*sm8150*defconfig" -type f 2>/dev/null | head -1)
-        fi
-        if [ -z "$DCFG" ]; then
-          echo "No suitable defconfig found! Available:"
+        if [ -z "$DCFG" ] || [ ! -f "$DCFG" ]; then
+          echo "ERROR: No raphael defconfig found"
           ls arch/arm64/configs/
           exit 1
         fi
         DCN=$(basename $DCFG .defconfig)
         echo "Using defconfig: $DCN ($DCFG)"
         export ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
-        make O=out -j$(nproc) $DCN
+        make O=out $DCN
         cd out
         echo "CONFIG_KSU=y" >> .config
-        make ARCH=arm64 olddefconfig
-        echo "=== KSU in config ==="
-        grep "CONFIG_KSU" .config || echo "WARN: CONFIG_KSU not found"
+        make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
+        echo "=== KSU config ==="
+        grep "CONFIG_KSU" .config || echo "WARN: CONFIG_KSU not set"
         echo "DCN=$DCN" >> $GITHUB_ENV
 
     - name: Build kernel
       run: |
         cd $GITHUB_WORKSPACE/kernel
         export ARCH=arm64
-        export CC=clang
-        export CLANG_TRIPLE=aarch64-linux-gnu-
         export CROSS_COMPILE=aarch64-linux-gnu-
-        export PATH="/usr/lib/ccache:$PATH"
         make O=out -j$(nproc) 2>&1 | tee out/build.log | tail -100
         echo "========"
         if [ -f out/arch/arm64/boot/Image ]; then
