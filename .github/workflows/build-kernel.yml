@@ -1,0 +1,82 @@
+name: Build SukiSU-Ultra Kernel for Raphael
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    steps:
+    - name: Install build dependencies
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq flex bison bc libssl-dev ccache zip \
+          clang lld gcc-aarch64-linux-gnu
+
+    - name: Clone kernel source
+      run: |
+        cd $GITHUB_WORKSPACE
+        git clone --depth=1 --single-branch \
+          https://github.com/raphael-ubports/kernel_xiaomi_raphael_stock kernel
+        cd kernel
+        echo "=== Available defconfigs ==="
+        find . -name "*.defconfig" 2>/dev/null | grep -i -E "raphael|sm8150|sdm855" | head -10
+
+    - name: Integrate SukiSU-Ultra
+      run: |
+        cd $GITHUB_WORKSPACE/kernel
+        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
+        echo "=== KSU integrated ==="
+        test -d drivers/kernelsu && echo "OK: drivers/kernelsu"
+
+    - name: Configure kernel
+      run: |
+        cd $GITHUB_WORKSPACE/kernel
+        DCFG=$(find . -name "*raphael*defconfig" 2>/dev/null | head -1)
+        [ -z "$DCFG" ] && DCFG=$(find arch/arm64/configs/ -maxdepth 1 -name "*.defconfig" 2>/dev/null | head -1)
+        DCN=$(basename $DCFG .defconfig)
+        echo "Using defconfig: $DCN"
+        export ARCH=arm64
+        make O=out $DCN
+        cd out
+        echo "CONFIG_KSU=y" >> .config
+        echo "CONFIG_KSU_MANUAL_HOOK=y" >> .config
+        make O=out olddefconfig ARCH=arm64
+        echo "=== KSU config ==="
+        grep "CONFIG_KSU" .config
+        echo "DCN=$DCN" >> $GITHUB_ENV
+
+    - name: Build kernel
+      run: |
+        cd $GITHUB_WORKSPACE/kernel
+        export ARCH=arm64
+        export CC=clang
+        export CLANG_TRIPLE=aarch64-linux-gnu-
+        export CROSS_COMPILE=aarch64-linux-gnu-
+        make O=out -j$(nproc) 2>&1 | tail -80
+        echo "========"
+        if [ -f out/arch/arm64/boot/Image ]; then
+          echo "BUILD SUCCESS"
+          ls -la out/arch/arm64/boot/Image*
+        else
+          echo "BUILD FAILED - searching for errors..."
+          grep -i "error:" out/build.log 2>/dev/null | tail -20 || true
+          find out/ -name "*.o" 2>/dev/null | wc -l
+          exit 1
+        fi
+
+    - name: Package kernel
+      run: |
+        cd $GITHUB_WORKSPACE
+        cp kernel/out/arch/arm64/boot/Image .
+        gzip -f -9 Image
+        ls -la Image.gz
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: SukiSU-Ultra-Image-raphael
+        path: Image.gz
+        retention-days: 7
