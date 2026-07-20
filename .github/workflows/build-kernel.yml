@@ -52,7 +52,7 @@ jobs:
       run: |
         cd $GITHUB_WORKSPACE/kernel
         curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" -o setup.sh
-        bash setup.sh v4.1.3 || { echo "SETUP FAILED"; exit 1; }
+        bash setup.sh builtin || { echo "SETUP FAILED"; exit 1; }
         echo "KSU driver check:"
         ls drivers/kernelsu/Makefile
 
