@@ -37,15 +37,17 @@ jobs:
         for f in scripts/dtc/dtc-lexer.lex.c_shipped scripts/dtc/dtc-lexer.l; do
           [ -f "$f" ] && sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/' "$f"
         done
-        # Bypass Python 2 gcc-wrapper if present
+        # Force Clang
         if grep -q 'scripts/gcc-wrapper.py' Makefile 2>/dev/null; then
           sed -i 's|^REAL_CC|#REAL_CC|' Makefile
           sed -i 's|^CC.*=.*scripts/gcc-wrapper.py|CC = clang|' Makefile
         fi
-        # Force Clang if Makefile uses GCC
         if grep -q '^CC.*=.*gcc' Makefile 2>/dev/null; then
           sed -i 's|^CC.*=.*gcc|CC = clang|' Makefile
         fi
+        # fallthrough keyword not in 4.14
+        grep -q 'define fallthrough' include/linux/compiler.h 2>/dev/null || \
+          echo "#define fallthrough" >> include/linux/compiler.h
         grep "^CC" Makefile | head -3 || true
 
     - name: Integrate SukiSU-Ultra v4.1.3
@@ -53,7 +55,20 @@ jobs:
         cd $GITHUB_WORKSPACE/kernel
         curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" -o setup.sh
         bash setup.sh builtin || { echo "SETUP FAILED"; exit 1; }
-        ls drivers/kernelsu/Makefile
+        cd $GITHUB_WORKSPACE/kernel
+        # Fix: 4.14 kernel compat for builtin KSU
+        # 1. fallthrough keyword (not in 4.14)
+        echo "#define fallthrough do {} while (0)" >> include/linux/compiler.h
+        # 2. Stub SUSFS selinux hide functions
+        cat > include/linux/ksu_selinux_hide.h << 'EOF'
+static inline void ksu_selinux_hide_handle_post_fs_data(void) { }
+static inline void ksu_selinux_hide_handle_second_stage(void) { }
+EOF
+        # 3. Fix user_arg_ptr type for 4.14 kernel
+        if grep -q 'user_arg_ptr' drivers/kernelsu/sulog/event.h 2>/dev/null; then
+          sed -i 's|struct user_arg_ptr \*|struct user_arg_ptr|g' drivers/kernelsu/sulog/event.h 2>/dev/null || true
+        fi
+        sed -i 's|struct user_arg_ptr \*|struct user_arg_ptr|g' drivers/kernelsu/sulog/event.c 2>/dev/null || true
 
     - name: Configure kernel
       run: |
