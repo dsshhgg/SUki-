@@ -28,18 +28,26 @@ jobs:
         for f in scripts/dtc/dtc-lexer.lex.c_shipped scripts/dtc/dtc-lexer.l; do
           [ -f "$f" ] && sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/' "$f"
         done
+        # Fix C99-style for-loop in kernel code
+        find . -name "*.c" -exec grep -l "for.*int.*;" {} \; 2>/dev/null | head -20
         # Bypass gcc-wrapper.py (Python 2, not compatible with Python 3)
         sed -i 's|^REAL_CC|#REAL_CC|' Makefile
         sed -i 's|^CC.*=.*scripts/gcc-wrapper.py|CC = $(CROSS_COMPILE)gcc|' Makefile
+        # Fix PERL path issue
+        if grep -q '^PERL' Makefile; then
+          sed -i 's|^PERL.*|PERL = perl|' Makefile
+        fi
         echo "=== CC setting ==="
-        grep "^CC\|^REAL_CC" Makefile
+        grep "^CC\|^REAL_CC" Makefile || true
 
     - name: Integrate SukiSU-Ultra
       run: |
         cd $GITHUB_WORKSPACE/kernel
         curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" -o setup.sh
-        bash setup.sh builtin || { echo "FAIL"; exit 1; }
-        [ -L drivers/kernelsu ] && echo "OK: symlink" || { echo "MISSING"; exit 1; }
+        # Use latest tag (v4.1.3) instead of builtin branch
+        bash setup.sh v4.1.3 || { echo "FAIL"; exit 1; }
+        ls -la drivers/kernelsu/ | head -20
+        [ -L drivers/kernelsu ] && echo "OK: symlink" || [ -d drivers/kernelsu ] && echo "OK: directory" || { echo "MISSING"; exit 1; }
 
     - name: Configure kernel
       run: |
@@ -56,27 +64,46 @@ jobs:
           echo "CONFIG_CC_STACKPROTECTOR_NONE=y"
         } >> .config
         make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
+        echo "=== KSU config check ==="
+        grep -i ksu .config || true
 
     - name: Build kernel
       run: |
         cd $GITHUB_WORKSPACE/kernel
         export ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
-        # Build just Image (skip dtbs which need older dtc)
-        # DTB can reuse from Zundamon kernel zip
-        make O=out Image -j$(nproc) \
+        # Verbose build, skip dtbs
+        make O=out Image -j$(nproc) V=1 \
           KCFLAGS="-Wno-error -std=gnu89" \
-          2>&1 | tee out/build.log | tail -80
+          2>&1 | tee out/build.log
         echo "===== RESULT ====="
         if [ -f out/arch/arm64/boot/Image ]; then
           echo "BUILD SUCCESS"
           ls -la out/arch/arm64/boot/Image*
         else
           echo "BUILD FAILED"
-          grep -i "error" out/build.log | tail -20 || true
+          echo "--- Last 50 lines with error ---"
+          grep -i "error" out/build.log | tail -50 || true
+          echo "--- Last 100 lines ---"
+          tail -100 out/build.log
           exit 1
         fi
 
-    - name: Upload Image.gz
+    - name: Upload full build log
+      if: always()
+      run: |
+        if [ -f kernel/out/build.log ]; then
+          cp kernel/out/build.log build.log
+        fi
+
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: build-log
+        path: build.log
+        retention-days: 3
+
+    - name: Compress Image
+      if: success()
       run: |
         cd $GITHUB_WORKSPACE
         cp kernel/out/arch/arm64/boot/Image Image
@@ -84,7 +111,8 @@ jobs:
         ls -la Image.gz
 
     - uses: actions/upload-artifact@v4
+      if: success()
       with:
-        name: SukiSU-Ultra-Image-raphael
+        name: SukiSU-Ultra-Image-raphael-v4.1.3
         path: Image.gz
         retention-days: 7
