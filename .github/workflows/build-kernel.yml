@@ -9,6 +9,7 @@ env:
   ARCH: arm64
   CC: clang
   CROSS_COMPILE: aarch64-linux-gnu-
+  CROSS_COMPILE_COMPAT: arm-linux-gnueabihf-
   CLANG_TRIPLE: aarch64-linux-gnu-
 
 jobs:
@@ -21,7 +22,7 @@ jobs:
       run: |
         sudo apt-get update -qq
         sudo apt-get install -y -qq flex bison bc libssl-dev \
-          clang lld gcc-aarch64-linux-gnu git curl python3
+          clang lld gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf git curl python3
 
     - name: Clone kernel source
       run: |
