@@ -14,7 +14,9 @@ jobs:
     - name: Install deps
       run: |
         sudo apt-get update -qq
-        sudo apt-get install -y -qq flex bison bc libssl-dev gcc-aarch64-linux-gnu git curl python3
+        # Clang + LLD + GNU binutils cross-tools
+        sudo apt-get install -y -qq flex bison bc libssl-dev \
+          clang lld gcc-aarch64-linux-gnu git curl python3
 
     - name: Clone kernel source
       run: |
@@ -24,56 +26,46 @@ jobs:
     - name: Fix compatibility issues
       run: |
         cd $GITHUB_WORKSPACE/kernel
-        # Fix yylloc multiple definition (GCC 12 vs old kernel)
+        # Fix yylloc multiple definition
         for f in scripts/dtc/dtc-lexer.lex.c_shipped scripts/dtc/dtc-lexer.l; do
           [ -f "$f" ] && sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/' "$f"
         done
-        # Fix C99-style for-loop in kernel code
-        find . -name "*.c" -exec grep -l "for.*int.*;" {} \; 2>/dev/null | head -20
-        # Bypass gcc-wrapper.py (Python 2, not compatible with Python 3)
-        sed -i 's|^REAL_CC|#REAL_CC|' Makefile
-        sed -i 's|^CC.*=.*scripts/gcc-wrapper.py|CC = $(CROSS_COMPILE)gcc|' Makefile
-        # Fix PERL path issue
-        if grep -q '^PERL' Makefile; then
-          sed -i 's|^PERL.*|PERL = perl|' Makefile
-        fi
-        echo "=== CC setting ==="
-        grep "^CC\|^REAL_CC" Makefile || true
+        # Don't bypass gcc-wrapper.py with Clang - let it work naturally
+        echo "Using Clang toolchain"
 
-    - name: Integrate SukiSU-Ultra
+    - name: Integrate SukiSU-Ultra v4.1.3
       run: |
         cd $GITHUB_WORKSPACE/kernel
         curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" -o setup.sh
-        # Use latest tag (v4.1.3) instead of builtin branch
         bash setup.sh v4.1.3 || { echo "FAIL"; exit 1; }
-        ls -la drivers/kernelsu/ | head -20
-        [ -L drivers/kernelsu ] && echo "OK: symlink" || [ -d drivers/kernelsu ] && echo "OK: directory" || { echo "MISSING"; exit 1; }
+        ls drivers/kernelsu/Makefile && echo "OK: KSU driver present" || { echo "MISSING"; exit 1; }
 
     - name: Configure kernel
       run: |
         cd $GITHUB_WORKSPACE/kernel
-        export ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
-        make O=out raphael_user_defconfig
+        make O=out ARCH=arm64 raphael_user_defconfig
         cd out
         {
           echo "CONFIG_KSU=y"
           echo "CONFIG_KSU_MANUAL_HOOK=y"
           echo "CONFIG_KALLSYMS=y"
           echo "CONFIG_KALLSYMS_ALL=y"
-          echo "# CONFIG_CC_STACKPROTECTOR_STRONG is not set"
-          echo "CONFIG_CC_STACKPROTECTOR_NONE=y"
         } >> .config
-        make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
-        echo "=== KSU config check ==="
+        make O=out ARCH=arm64 olddefconfig
+        echo "=== KSU config ==="
         grep -i ksu .config || true
+        echo "=== Toolchain ==="
+        clang --version | head -1
 
     - name: Build kernel
       run: |
         cd $GITHUB_WORKSPACE/kernel
-        export ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
-        # Verbose build, skip dtbs
-        make O=out Image -j$(nproc) V=1 \
-          KCFLAGS="-Wno-error -std=gnu89" \
+        # Clang cross-compile (standard Android kernel build method)
+        make O=out Image -j$(nproc) \
+          ARCH=arm64 \
+          CC=clang \
+          CROSS_COMPILE=aarch64-linux-gnu- \
+          CLANG_TRIPLE=aarch64-linux-gnu- \
           2>&1 | tee out/build.log
         echo "===== RESULT ====="
         if [ -f out/arch/arm64/boot/Image ]; then
@@ -81,19 +73,17 @@ jobs:
           ls -la out/arch/arm64/boot/Image*
         else
           echo "BUILD FAILED"
-          echo "--- Last 50 lines with error ---"
-          grep -i "error" out/build.log | tail -50 || true
-          echo "--- Last 100 lines ---"
-          tail -100 out/build.log
+          echo "--- Errors ---"
+          grep -i "error:" out/build.log | tail -30 || true
+          echo "--- Last 50 lines ---"
+          tail -50 out/build.log
           exit 1
         fi
 
-    - name: Upload full build log
+    - name: Upload build log
       if: always()
       run: |
-        if [ -f kernel/out/build.log ]; then
-          cp kernel/out/build.log build.log
-        fi
+        [ -f kernel/out/build.log ] && cp kernel/out/build.log build.log
 
     - uses: actions/upload-artifact@v4
       if: always()
@@ -113,6 +103,6 @@ jobs:
     - uses: actions/upload-artifact@v4
       if: success()
       with:
-        name: SukiSU-Ultra-Image-raphael-v4.1.3
+        name: SukiSU-Ultra-v4.1.3-Image-raphael
         path: Image.gz
         retention-days: 7
