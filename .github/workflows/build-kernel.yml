@@ -1,4 +1,4 @@
-name: Test Build Raphael Kernel
+name: Build SukiSU-Ultra Kernel for Raphael
 
 on:
   workflow_dispatch:
@@ -12,27 +12,69 @@ jobs:
 
     steps:
     - name: Install deps
-      run: sudo apt-get update -qq && sudo apt-get install -y -qq flex bison bc libssl-dev gcc-aarch64-linux-gnu git
+      run: sudo apt-get update -qq && sudo apt-get install -y -qq flex bison bc libssl-dev gcc-aarch64-linux-gnu git curl
 
-    - name: Clone source
+    - name: Clone kernel source
       run: |
         git clone --depth=1 --single-branch --branch raphael-p-oss \
           https://github.com/raphael-ubports/kernel_xiaomi_raphael_stock kernel
-        cd kernel
-        fold -s Makefile | head -20
-        ls arch/arm64/configs/raphael_user_defconfig
-        echo "CLONE OK"
 
-    - name: Build kernel (minimal test)
+    - name: Build baseline (no KSU)
       run: |
         cd $GITHUB_WORKSPACE/kernel
         export ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
         make O=out raphael_user_defconfig
+        make O=out -j$(nproc) 2>&1 | tail -30
+        echo "===== BASELINE BUILD DONE ====="
+        test -f out/arch/arm64/boot/Image && echo "Image OK: $(ls -la out/arch/arm64/boot/Image*)" || echo "Image MISSING"
+        # clean for rebuild
+        rm -rf out/
+
+    - name: Integrate SukiSU-Ultra
+      run: |
+        cd $GITHUB_WORKSPACE/kernel
+        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" -o setup.sh
+        echo "=== Setup script content (first 10 lines) ==="
+        head -10 setup.sh
+        echo "=== Running setup.sh ==="
+        bash setup.sh main || { echo "setup.sh failed"; exit 1; }
+        echo "=== Verify integration ==="
+        [ -L drivers/kernelsu ] && echo "KSU symlink: OK" || { echo "KSU symlink: MISSING"; exit 1; }
+        grep -q "kernelsu" drivers/Makefile && echo "Makefile entry: OK" || { echo "Makefile entry: MISSING"; exit 1; }
+        grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig && echo "Kconfig entry: OK" || { echo "Kconfig entry: MISSING"; exit 1; }
+        # verify KSU config option exists
+        grep -r "config KSU" drivers/kernelsu/Kconfig | head -3
+        echo "=== INTEGRATION CHECK DONE ==="
+
+    - name: Build with KSU enabled
+      run: |
+        cd $GITHUB_WORKSPACE/kernel
+        export ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
+        make O=out raphael_user_defconfig
+        echo "CONFIG_KSU=y" >> out/.config
+        make O=out olddefconfig
+        echo "=== KSU config check ==="
+        grep "CONFIG_KSU" out/.config || echo "WARN: CONFIG_KSU not in config"
+        echo "=== Build kernel ==="
         make O=out -j$(nproc) 2>&1 | tee out/build.log | tail -50
-        echo "===== BUILD COMPLETE ====="
-        echo "Checking output files..."
-        find out/ -maxdepth 5 -name "Image*" -type f 2>/dev/null || echo "No Image* found"
-        find out/ -maxdepth 5 -name "vmlinux*" -type f 2>/dev/null || echo "No vmlinux* found"
-        ls -la out/ 2>/dev/null || echo "out dir empty"
-        echo "===== LOG ERRORS ====="
-        grep -i "error" out/build.log | head -20 || echo "No errors found"
+        echo "===== BUILD CHECK ====="
+        if [ -f out/arch/arm64/boot/Image ]; then
+          echo "BUILD SUCCESS: $(ls -la out/arch/arm64/boot/Image*)"
+        else
+          echo "BUILD FAILED"
+          grep -i "error" out/build.log | tail -30 || true
+          exit 1
+        fi
+
+    - name: Upload Image.gz
+      run: |
+        cd $GITHUB_WORKSPACE
+        cp kernel/out/arch/arm64/boot/Image Image
+        gzip -f -9 Image
+        ls -la Image.gz
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: SukiSU-Ultra-Image-raphael
+        path: Image.gz
+        retention-days: 7
