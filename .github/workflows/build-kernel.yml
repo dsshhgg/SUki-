@@ -19,45 +19,45 @@ jobs:
         git clone --depth=1 --single-branch --branch raphael-p-oss \
           https://github.com/raphael-ubports/kernel_xiaomi_raphael_stock kernel
 
-    - name: Build baseline (no KSU)
-      run: |
-        cd $GITHUB_WORKSPACE/kernel
-        export ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
-        make O=out raphael_user_defconfig
-        make O=out -j$(nproc) 2>&1 | tail -30
-        echo "===== BASELINE BUILD DONE ====="
-        test -f out/arch/arm64/boot/Image && echo "Image OK: $(ls -la out/arch/arm64/boot/Image*)" || echo "Image MISSING"
-        # clean for rebuild
-        rm -rf out/
-
-    - name: Integrate SukiSU-Ultra
+    - name: Integrate SukiSU-Ultra (non-GKI builtin)
       run: |
         cd $GITHUB_WORKSPACE/kernel
         curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" -o setup.sh
-        echo "=== Setup script content (first 10 lines) ==="
-        head -10 setup.sh
-        echo "=== Running setup.sh ==="
-        bash setup.sh main || { echo "setup.sh failed"; exit 1; }
+        echo "Using 'builtin' branch for non-GKI kernel"
+        bash setup.sh builtin || { echo "setup.sh failed"; exit 1; }
         echo "=== Verify integration ==="
-        [ -L drivers/kernelsu ] && echo "KSU symlink: OK" || { echo "KSU symlink: MISSING"; exit 1; }
-        grep -q "kernelsu" drivers/Makefile && echo "Makefile entry: OK" || { echo "Makefile entry: MISSING"; exit 1; }
-        grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig && echo "Kconfig entry: OK" || { echo "Kconfig entry: MISSING"; exit 1; }
-        # verify KSU config option exists
-        grep -r "config KSU" drivers/kernelsu/Kconfig | head -3
-        echo "=== INTEGRATION CHECK DONE ==="
+        [ -L drivers/kernelsu ] && echo "KSU symlink: OK" || { echo "symlink MISSING"; exit 1; }
+        grep -q "kernelsu" drivers/Makefile && echo "Makefile: OK" || echo "Makefile: MISSING"
+        grep -q "kernelsu" drivers/Kconfig && echo "Kconfig: OK" || echo "Kconfig: MISSING"
+        echo "=== KSU dirs ==="
+        ls -la KernelSU/
+        echo "=== Check for manual hooks ==="
+        ls KernelSU/kernel/hook/ 2>/dev/null || echo "no hook dir"
+        ls KernelSU/kernel/manual/ 2>/dev/null || echo "no manual dir"
 
-    - name: Build with KSU enabled
+    - name: Configure for KSU (non-GKI manual hook)
       run: |
         cd $GITHUB_WORKSPACE/kernel
         export ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
         make O=out raphael_user_defconfig
-        echo "CONFIG_KSU=y" >> out/.config
+        {
+          echo "CONFIG_KSU=y"
+          echo "CONFIG_KSU_MANUAL_HOOK=y"
+          echo "CONFIG_KALLSYMS=y"
+          echo "CONFIG_KALLSYMS_ALL=y"
+          echo "CONFIG_KPROBES=y"
+        } >> out/.config
         make O=out olddefconfig
-        echo "=== KSU config check ==="
-        grep "CONFIG_KSU" out/.config || echo "WARN: CONFIG_KSU not in config"
-        echo "=== Build kernel ==="
+        echo "=== KSU config ==="
+        grep "CONFIG_KSU" out/.config || echo "KSU not set"
+        grep "CONFIG_KALLSYMS" out/.config || echo "KALLSYMS not set"
+
+    - name: Build kernel
+      run: |
+        cd $GITHUB_WORKSPACE/kernel
+        export ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
         make O=out -j$(nproc) 2>&1 | tee out/build.log | tail -50
-        echo "===== BUILD CHECK ====="
+        echo "===== CHECK ====="
         if [ -f out/arch/arm64/boot/Image ]; then
           echo "BUILD SUCCESS: $(ls -la out/arch/arm64/boot/Image*)"
         else
