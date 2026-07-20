@@ -26,8 +26,8 @@ jobs:
 
     - name: Clone kernel source
       run: |
-        git clone --depth=1 --single-branch --branch main \
-          https://github.com/Nevers1/kernel_xiaomi_raphael kernel
+        git clone --depth=1 --single-branch --branch raphael-p-oss \
+          https://github.com/raphael-ubports/kernel_xiaomi_raphael_stock kernel
         echo "Kernel version:"
         head -5 kernel/Makefile
 
@@ -44,25 +44,18 @@ jobs:
         echo "Toolchain:"
         clang --version | head -1
 
-    - name: Upgrade to SukiSU-Ultra v4.1.3
+    - name: Integrate SukiSU-Ultra v4.1.3
       run: |
         cd $GITHUB_WORKSPACE/kernel
-        # Remove old KSU symlink and submodule
-        rm -rf drivers/kernelsu KernelSU-Next
-        git checkout -- drivers/Makefile drivers/Kconfig 2>/dev/null || true
-        # Download latest setup.sh
         curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" -o setup.sh
-        # Install SukiSU-Ultra v4.1.3
         bash setup.sh v4.1.3 || { echo "SETUP FAILED"; exit 1; }
         echo "KSU driver check:"
-        ls -la drivers/kernelsu/Makefile
-        echo "=== KSU version ==="
-        cat drivers/kernelsu/core/ksu_version.h 2>/dev/null || true
+        ls drivers/kernelsu/Makefile
 
     - name: Configure kernel
       run: |
         cd $GITHUB_WORKSPACE/kernel
-        make O=out raphael_defconfig
+        make O=out raphael_user_defconfig
         cd out
         # Ensure KSU config is enabled
         sed -i 's/.*CONFIG_KSU.*/CONFIG_KSU=y/' .config 2>/dev/null || \
