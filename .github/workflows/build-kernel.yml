@@ -5,6 +5,12 @@ on:
   push:
     branches: [main]
 
+env:
+  ARCH: arm64
+  CC: clang
+  CROSS_COMPILE: aarch64-linux-gnu-
+  CLANG_TRIPLE: aarch64-linux-gnu-
+
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -14,59 +20,62 @@ jobs:
     - name: Install deps
       run: |
         sudo apt-get update -qq
-        # Clang + LLD + GNU binutils cross-tools
         sudo apt-get install -y -qq flex bison bc libssl-dev \
           clang lld gcc-aarch64-linux-gnu git curl python3
 
     - name: Clone kernel source
       run: |
-        git clone --depth=1 --single-branch --branch raphael-p-oss \
-          https://github.com/raphael-ubports/kernel_xiaomi_raphael_stock kernel
+        git clone --depth=1 --single-branch --branch main \
+          https://github.com/Nevers1/kernel_xiaomi_raphael kernel
+        echo "Kernel version:"
+        head -5 kernel/Makefile
 
-    - name: Fix compatibility issues
+    - name: Fix compatibility
       run: |
         cd $GITHUB_WORKSPACE/kernel
-        # Fix yylloc multiple definition
+        # Fix yylloc (GCC/Clang strict build)
         for f in scripts/dtc/dtc-lexer.lex.c_shipped scripts/dtc/dtc-lexer.l; do
           [ -f "$f" ] && sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/' "$f"
         done
-        # Don't bypass gcc-wrapper.py with Clang - let it work naturally
-        echo "Using Clang toolchain"
+        echo "Toolchain:"
+        clang --version | head -1
+        aarch64-linux-gnu-as --version | head -1
 
-    - name: Integrate SukiSU-Ultra v4.1.3
+    - name: Upgrade to SukiSU-Ultra v4.1.3
       run: |
         cd $GITHUB_WORKSPACE/kernel
+        # Remove old KSU symlink and submodule
+        rm -rf drivers/kernelsu KernelSU-Next
+        git checkout -- drivers/Makefile drivers/Kconfig 2>/dev/null || true
+        # Download latest setup.sh
         curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" -o setup.sh
-        bash setup.sh v4.1.3 || { echo "FAIL"; exit 1; }
-        ls drivers/kernelsu/Makefile && echo "OK: KSU driver present" || { echo "MISSING"; exit 1; }
+        # Install SukiSU-Ultra v4.1.3
+        bash setup.sh v4.1.3 || { echo "SETUP FAILED"; exit 1; }
+        echo "KSU driver check:"
+        ls -la drivers/kernelsu/Makefile
+        echo "=== KSU version ==="
+        cat drivers/kernelsu/core/ksu_version.h 2>/dev/null || true
 
     - name: Configure kernel
       run: |
         cd $GITHUB_WORKSPACE/kernel
-        make O=out ARCH=arm64 raphael_user_defconfig
+        make O=out raphael_defconfig
         cd out
-        {
-          echo "CONFIG_KSU=y"
-          echo "CONFIG_KSU_MANUAL_HOOK=y"
-          echo "CONFIG_KALLSYMS=y"
-          echo "CONFIG_KALLSYMS_ALL=y"
-        } >> .config
-        make O=out ARCH=arm64 olddefconfig
+        # Ensure KSU config is enabled
+        sed -i 's/.*CONFIG_KSU.*/CONFIG_KSU=y/' .config 2>/dev/null || \
+          echo "CONFIG_KSU=y" >> .config
+        grep -q "CONFIG_KSU_MANUAL_HOOK" .config || \
+          echo "CONFIG_KSU_MANUAL_HOOK=y" >> .config
+        grep -q "CONFIG_KALLSYMS_ALL" .config || \
+          echo "CONFIG_KALLSYMS_ALL=y" >> .config
+        make olddefconfig
         echo "=== KSU config ==="
-        grep -i ksu .config || true
-        echo "=== Toolchain ==="
-        clang --version | head -1
+        grep -i "ksu\|kallsyms" .config
 
     - name: Build kernel
       run: |
         cd $GITHUB_WORKSPACE/kernel
-        # Clang cross-compile (standard Android kernel build method)
-        make O=out Image -j$(nproc) \
-          ARCH=arm64 \
-          CC=clang \
-          CROSS_COMPILE=aarch64-linux-gnu- \
-          CLANG_TRIPLE=aarch64-linux-gnu- \
-          2>&1 | tee out/build.log
+        make O=out Image -j$(nproc) 2>&1 | tee out/build.log
         echo "===== RESULT ====="
         if [ -f out/arch/arm64/boot/Image ]; then
           echo "BUILD SUCCESS"
