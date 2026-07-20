@@ -61,7 +61,11 @@ jobs:
       run: |
         cd $GITHUB_WORKSPACE/kernel
         export ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
-        make O=out -j$(nproc) KCFLAGS="-Wno-error -Wno-error=designated-init" 2>&1 | tee out/build.log | tail -60
+        # Build just Image (skip dtbs which need older dtc)
+        # DTB can reuse from Zundamon kernel zip
+        make O=out Image -j$(nproc) \
+          KCFLAGS="-Wno-error -std=gnu89" \
+          2>&1 | tee out/build.log | tail -80
         echo "===== RESULT ====="
         if [ -f out/arch/arm64/boot/Image ]; then
           echo "BUILD SUCCESS"
