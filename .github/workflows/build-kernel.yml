@@ -56,18 +56,12 @@ jobs:
         curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" -o setup.sh
         bash setup.sh builtin || { echo "SETUP FAILED"; exit 1; }
         cd $GITHUB_WORKSPACE/kernel
-        # Fix: 4.14 kernel compat for builtin KSU
         # 1. fallthrough keyword (not in 4.14)
-        echo "#define fallthrough do {} while (0)" >> include/linux/compiler.h
-        # 2. Stub SUSFS selinux hide functions
-        cat > include/linux/ksu_selinux_hide.h << 'EOF'
-static inline void ksu_selinux_hide_handle_post_fs_data(void) { }
-static inline void ksu_selinux_hide_handle_second_stage(void) { }
-EOF
+        sed -i '1i#define fallthrough do {} while (0)' drivers/kernelsu/policy/allowlist.c
+        # 2. Stub selinux hide functions in ksud.c (at top after includes)
+        sed -i '10i static inline void ksu_selinux_hide_handle_post_fs_data(void) { }\nstatic inline void ksu_selinux_hide_handle_second_stage(void) { }\n' drivers/kernelsu/runtime/ksud.c
         # 3. Fix user_arg_ptr type for 4.14 kernel
-        if grep -q 'user_arg_ptr' drivers/kernelsu/sulog/event.h 2>/dev/null; then
-          sed -i 's|struct user_arg_ptr \*|struct user_arg_ptr|g' drivers/kernelsu/sulog/event.h 2>/dev/null || true
-        fi
+        sed -i 's|struct user_arg_ptr \*|struct user_arg_ptr|g' drivers/kernelsu/sulog/event.h 2>/dev/null || true
         sed -i 's|struct user_arg_ptr \*|struct user_arg_ptr|g' drivers/kernelsu/sulog/event.c 2>/dev/null || true
 
     - name: Configure kernel
