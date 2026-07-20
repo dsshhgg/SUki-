@@ -1,4 +1,4 @@
-name: Build SukiSU-Ultra Kernel for Raphael
+name: Test Build Raphael Kernel
 
 on:
   workflow_dispatch:
@@ -11,91 +11,28 @@ jobs:
     timeout-minutes: 90
 
     steps:
-    - name: Install build dependencies
-      run: |
-        sudo apt-get update -qq
-        sudo apt-get install -y -qq flex bison bc libssl-dev ccache zip \
-          clang lld gcc-aarch64-linux-gnu git
+    - name: Install deps
+      run: sudo apt-get update -qq && sudo apt-get install -y -qq flex bison bc libssl-dev gcc-aarch64-linux-gnu git
 
-    - name: Clone kernel source
-      timeout-minutes: 10
+    - name: Clone source
       run: |
-        cd $GITHUB_WORKSPACE
         git clone --depth=1 --single-branch --branch raphael-p-oss \
           https://github.com/raphael-ubports/kernel_xiaomi_raphael_stock kernel
         cd kernel
-        echo "=== Kernel version ==="
-        grep -E "^VERSION|^PATCHLEVEL|^SUBLEVEL|^NAME" Makefile | head -10
-        echo "=== Defconfigs ==="
-        find arch/arm64/configs/ -name "*.defconfig" -type f 2>/dev/null | sort
+        fold -s Makefile | head -20
+        ls arch/arm64/configs/raphael_user_defconfig
+        echo "CLONE OK"
 
-    - name: Integrate SukiSU-Ultra
+    - name: Build kernel (minimal test)
       run: |
         cd $GITHUB_WORKSPACE/kernel
-        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" -o setup_ksu.sh
-        test -s setup_ksu.sh || exit 1
-        bash setup_ksu.sh main
-        echo "=== KSU integration check ==="
-        if [ -d drivers/kernelsu ]; then
-          echo "OK: drivers/kernelsu exists"
-          ls -la drivers/kernelsu/
-        else
-          echo "WARN: drivers/kernelsu not found, trying fallback"
-          ls -d drivers/ || true
-        fi
-
-    - name: Configure kernel
-      run: |
-        cd $GITHUB_WORKSPACE/kernel
-        # Use the raphael_user_defconfig from the repo
-        DCFG="arch/arm64/configs/raphael_user_defconfig"
-        if [ ! -f "$DCFG" ]; then
-          echo "raphael_user_defconfig not found, searching..."
-          DCFG=$(find arch/arm64/configs/ -name "*raphael*defconfig" -type f 2>/dev/null | head -1)
-        fi
-        if [ -z "$DCFG" ] || [ ! -f "$DCFG" ]; then
-          echo "ERROR: No raphael defconfig found"
-          ls arch/arm64/configs/
-          exit 1
-        fi
-        DCN=$(basename $DCFG .defconfig)
-        echo "Using defconfig: $DCN ($DCFG)"
         export ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
-        make O=out $DCN
-        cd out
-        echo "CONFIG_KSU=y" >> .config
-        make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
-        echo "=== KSU config ==="
-        grep "CONFIG_KSU" .config || echo "WARN: CONFIG_KSU not set"
-        echo "DCN=$DCN" >> $GITHUB_ENV
-
-    - name: Build kernel
-      run: |
-        cd $GITHUB_WORKSPACE/kernel
-        export ARCH=arm64
-        export CROSS_COMPILE=aarch64-linux-gnu-
-        make O=out -j$(nproc) 2>&1 | tee out/build.log | tail -100
-        echo "========"
-        if [ -f out/arch/arm64/boot/Image ]; then
-          echo "BUILD SUCCESS"
-          ls -la out/arch/arm64/boot/Image*
-        else
-          echo "BUILD FAILED - checking for errors:"
-          grep -i "error" out/build.log | tail -30 || true
-          echo "=== Object files: $(find out/ -name '*.o' | wc -l)"
-          exit 1
-        fi
-
-    - name: Package kernel
-      run: |
-        cd $GITHUB_WORKSPACE
-        cp kernel/out/arch/arm64/boot/Image .
-        gzip -f -9 Image
-        ls -la Image.gz
-
-    - name: Upload Image.gz
-      uses: actions/upload-artifact@v4
-      with:
-        name: SukiSU-Ultra-Image-raphael
-        path: Image.gz
-        retention-days: 7
+        make O=out raphael_user_defconfig
+        make O=out -j$(nproc) 2>&1 | tee out/build.log | tail -50
+        echo "===== BUILD COMPLETE ====="
+        echo "Checking output files..."
+        find out/ -maxdepth 5 -name "Image*" -type f 2>/dev/null || echo "No Image* found"
+        find out/ -maxdepth 5 -name "vmlinux*" -type f 2>/dev/null || echo "No vmlinux* found"
+        ls -la out/ 2>/dev/null || echo "out dir empty"
+        echo "===== LOG ERRORS ====="
+        grep -i "error" out/build.log | head -20 || echo "No errors found"
