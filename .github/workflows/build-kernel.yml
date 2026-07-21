@@ -45,9 +45,6 @@ jobs:
         if grep -q '^CC.*=.*gcc' Makefile 2>/dev/null; then
           sed -i 's|^CC.*=.*gcc|CC = clang|' Makefile
         fi
-        # fallthrough keyword not in 4.14
-        grep -q 'define fallthrough' include/linux/compiler.h 2>/dev/null || \
-          echo "#define fallthrough" >> include/linux/compiler.h
         grep "^CC" Makefile | head -3 || true
 
     - name: Integrate SukiSU-Ultra
