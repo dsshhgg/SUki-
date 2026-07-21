@@ -52,11 +52,8 @@ jobs:
         cd $GITHUB_WORKSPACE/kernel
         curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" -o setup.sh
         bash setup.sh old || { echo "SETUP FAILED"; exit 1; }
-        # Remove MODULE_IMPORT_NS block (causes Clang error on 4.14)
-        sed -i '/LINUX_VERSION_CODE.*KERNEL_VERSION(6, 13/d' drivers/kernelsu/ksu.c 2>/dev/null || true
-        sed -i '/MODULE_IMPORT_NS/d' drivers/kernelsu/ksu.c 2>/dev/null || true
-        sed -i 's|^#else$||' drivers/kernelsu/ksu.c 2>/dev/null || true
-        sed -i 's|^#endif$||' drivers/kernelsu/ksu.c 2>/dev/null || true
+        # Comment out MODULE_IMPORT_NS (Clang 14 + 4.14 compat)
+        sed -i 's|MODULE_IMPORT_NS|//MODULE_IMPORT_NS|g' drivers/kernelsu/ksu.c
         # Fix fallthrough in allowlist.c
         sed -i '1s/^/#define fallthrough do {} while (0)\n/' drivers/kernelsu/allowlist.c 2>/dev/null || true
 
