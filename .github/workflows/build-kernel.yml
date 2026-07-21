@@ -1,4 +1,4 @@
-name: Build SukiSU-Ultra Kernel for Raphael
+name: Build ReSukiSU Kernel for Raphael
 
 on:
   workflow_dispatch:
@@ -37,39 +37,255 @@ jobs:
         for f in scripts/dtc/dtc-lexer.lex.c_shipped scripts/dtc/dtc-lexer.l; do
           [ -f "$f" ] && sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/' "$f"
         done
-        # Bypass gcc-wrapper.py (Python 2)
         sed -i 's|^REAL_CC|#REAL_CC|' Makefile
         sed -i 's|^CC.*scripts/gcc-wrapper.py|CC = clang|' Makefile
-        # Fix PERL
         grep -q '^PERL' Makefile && sed -i 's|^PERL.*|PERL = perl|' Makefile
         grep "^CC" Makefile | head -3 || true
 
-    - name: Integrate SukiSU-Ultra old branch (4.14 compat)
+    - name: Integrate ReSukiSU (Non-GKI 4.14)
       run: |
         cd $GITHUB_WORKSPACE/kernel
-        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" -o setup.sh
-        bash setup.sh old || { echo "SETUP FAILED"; exit 1; }
-        # Comment out MODULE_IMPORT_NS (Clang 14 + 4.14 compat)
-        sed -i 's|MODULE_IMPORT_NS|//MODULE_IMPORT_NS|g' drivers/kernelsu/ksu.c
-        # Fix fallthrough in allowlist.c
-        sed -i '1s/^/#define fallthrough do {} while (0)\n/' drivers/kernelsu/allowlist.c 2>/dev/null || true
+        # Clone ReSukiSU (designed for Non-GKI 4.4+ kernels)
+        git clone --depth=1 https://github.com/ReSukiSU/ReSukiSU KernelSU
+        echo "[+] ReSukiSU cloned"
+
+        # Create symlink in drivers/
+        if [ -d "common/drivers" ]; then
+          DRIVER_DIR="common/drivers"
+        else
+          DRIVER_DIR="drivers"
+        fi
+        ln -sf "$(realpath --relative-to="$DRIVER_DIR" "$(pwd)/KernelSU/kernel")" "$DRIVER_DIR/kernelsu"
+        echo "[+] Symlink created"
+
+        # Add to drivers/Makefile
+        grep -q "kernelsu" "$DRIVER_DIR/Makefile" || \
+          printf "\nobj-\$(CONFIG_KSU) += kernelsu/\n" >> "$DRIVER_DIR/Makefile"
+        echo "[+] Makefile updated"
+
+        # Add to drivers/Kconfig
+        grep -q "kernelsu" "$DRIVER_DIR/Kconfig" || \
+          sed -i '/^endmenu/i\source "drivers/kernelsu/Kconfig"' "$DRIVER_DIR/Kconfig"
+        echo "[+] Kconfig updated"
+
+        # Fix Clang compat issues in KSU code
+        sed -i 's|MODULE_IMPORT_NS|//MODULE_IMPORT_NS|g' "$DRIVER_DIR/kernelsu/ksu.c" 2>/dev/null || true
+        sed -i '1s/^/#define fallthrough do {} while (0)\n/' "$DRIVER_DIR/kernelsu/allowlist.c" 2>/dev/null || true
+
+    - name: Apply manual hooks (4.14 Non-GKI)
+      run: |
+        cd $GITHUB_WORKSPACE/kernel
+
+        echo "=== [1/7] stat hook (fs/stat.c) ==="
+        # Add extern declarations before #if !defined(__ARCH_WANT_STAT64)
+        if ! grep -q "ksu_handle_stat" fs/stat.c; then
+          sed -i '/^#if !defined(__ARCH_WANT_STAT64) || defined(__ARCH_WANT_SYS_NEWFSTATAT)/i\
+#ifdef CONFIG_KSU_MANUAL_HOOK\
+__attribute__((hot))\
+extern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);\
+\
+extern void ksu_handle_newfstat_ret(unsigned int *fd, struct stat __user **statbuf_ptr);\
+#endif' fs/stat.c
+
+          # Hook newfstatat: insert ksu_handle_stat before error = vfs_fstatat
+          sed -i '/SYSCALL_DEFINE4(newfstatat/,/^}/{
+            /error = vfs_fstatat(dfd, filename, &stat, flag);/i\
+#ifdef CONFIG_KSU_MANUAL_HOOK\
+	ksu_handle_stat(\&dfd, \&filename, \&flag);\
+#endif
+          }' fs/stat.c
+
+          # Hook fstatat64: insert ksu_handle_stat before error = vfs_fstatat
+          sed -i '/SYSCALL_DEFINE4(fstatat64/,/^}/{
+            /error = vfs_fstatat(dfd, filename, &stat, flag);/i\
+#ifdef CONFIG_KSU_MANUAL_HOOK\
+	ksu_handle_stat(\&dfd, \&filename, \&flag);\
+#endif
+          }' fs/stat.c 2>/dev/null || true
+
+          # Hook newfstat ret: insert before return error
+          sed -i '/SYSCALL_DEFINE2(newfstat/,/^}/{
+            /return error;/i\
+#ifdef CONFIG_KSU_MANUAL_HOOK\
+	ksu_handle_newfstat_ret(\&fd, \&statbuf);\
+#endif
+          }' fs/stat.c 2>/dev/null || true
+
+          # Hook fstat64 ret: insert before return error
+          sed -i '/SYSCALL_DEFINE2(fstat64/,/^}/{
+            /return error;/i\
+#ifdef CONFIG_KSU_MANUAL_HOOK\
+	ksu_handle_fstat64_ret(\&fd, \&statbuf);\
+#endif
+          }' fs/stat.c 2>/dev/null || true
+
+          echo "  -> fs/stat.c hooked"
+        else
+          echo "  -> fs/stat.c already hooked"
+        fi
+
+        echo "=== [2/7] execve hook (fs/exec.c) ==="
+        if ! grep -q "ksu_handle_execveat" fs/exec.c; then
+          sed -i '/^int do_execve(struct filename/,/^{/{
+            /^{/a\
+#ifdef CONFIG_KSU_MANUAL_HOOK\
+	ksu_handle_execveat((int *)AT_FDCWD, \&filename, \&argv, \&envp, 0);\
+#endif
+          }' fs/exec.c 2>/dev/null
+
+          # Add extern declarations before do_execve
+          sed -i '/^int do_execve(/i\
+#ifdef CONFIG_KSU_MANUAL_HOOK\
+__attribute__((hot))\
+extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr,\
+				void *argv, void *envp, int *flags);\
+#endif' fs/exec.c
+
+          # Hook compat_do_execve if it exists
+          if grep -q "compat_do_execve" fs/exec.c; then
+            sed -i '/compat_do_execve(struct filename/,/^{/{
+              /^{/a\
+#ifdef CONFIG_KSU_MANUAL_HOOK\
+	ksu_handle_execveat((int *)AT_FDCWD, \&filename, \&argv, \&envp, 0);\
+#endif
+            }' fs/exec.c 2>/dev/null || true
+          fi
+
+          echo "  -> fs/exec.c hooked"
+        else
+          echo "  -> fs/exec.c already hooked"
+        fi
+
+        echo "=== [3/7] faccessat hook (fs/open.c) ==="
+        if ! grep -q "ksu_handle_faccessat" fs/open.c; then
+          sed -i '/^SYSCALL_DEFINE3(faccessat, int, dfd, const char __user \*, filename, int, mode)/i\
+#ifdef CONFIG_KSU_MANUAL_HOOK\
+__attribute__((hot))\
+extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user,\
+				int *mode, int *flags);\
+#endif' fs/open.c
+
+          # Insert hook at the beginning of faccessat body (after local vars)
+          sed -i '/SYSCALL_DEFINE3(faccessat, int, dfd, const char __user \*, filename, int, mode)/,/^{/{
+            /^{/a\
+#ifdef CONFIG_KSU_MANUAL_HOOK\
+	ksu_handle_faccessat(\&dfd, \&filename, \&mode, NULL);\
+#endif
+          }' fs/open.c 2>/dev/null || true
+
+          echo "  -> fs/open.c hooked"
+        else
+          echo "  -> fs/open.c already hooked"
+        fi
+
+        echo "=== [4/7] sys_reboot hook (kernel/reboot.c) ==="
+        if ! grep -q "ksu_handle_sys_reboot" kernel/reboot.c; then
+          sed -i '/^SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,/i\
+#ifdef CONFIG_KSU_MANUAL_HOOK\
+extern int ksu_handle_sys_reboot(int, int, unsigned int, void __user **);\
+#endif' kernel/reboot.c
+
+          sed -i '/SYSCALL_DEFINE4(reboot/,/^{/{
+            /^{/a\
+#ifdef CONFIG_KSU_MANUAL_HOOK\
+	ksu_handle_sys_reboot(magic1, magic2, cmd, \&arg);\
+#endif
+          }' kernel/reboot.c 2>/dev/null || true
+
+          echo "  -> kernel/reboot.c hooked"
+        else
+          echo "  -> kernel/reboot.c already hooked"
+        fi
+
+        echo "=== [5/7] input hook (drivers/input/input.c) ==="
+        if ! grep -q "ksu_handle_input_handle_event" drivers/input/input.c; then
+          sed -i '/^void input_event(struct input_dev \*dev,/i\
+#ifdef CONFIG_KSU_MANUAL_HOOK\
+extern bool ksu_input_hook __read_mostly;\
+extern int ksu_handle_input_handle_event(\
+			unsigned int *type, unsigned int *code, int *value);\
+#endif' drivers/input/input.c
+
+          sed -i '/^void input_event(struct input_dev \*dev,/,/^{/{
+            /^{/a\
+#ifdef CONFIG_KSU_MANUAL_HOOK\
+	if (unlikely(ksu_input_hook))\
+		ksu_handle_input_handle_event(\&type, \&code, \&value);\
+#endif
+          }' drivers/input/input.c 2>/dev/null || true
+
+          echo "  -> drivers/input/input.c hooked"
+        else
+          echo "  -> drivers/input/input.c already hooked"
+        fi
+
+        echo "=== [6/7] sys_read hook (fs/read_write.c) ==="
+        if ! grep -q "ksu_handle_sys_read\|ksu_init_rc_hook" fs/read_write.c; then
+          sed -i '/^SYSCALL_DEFINE3(read, unsigned int, fd, char __user \*, buf, size_t, count)/i\
+#ifdef CONFIG_KSU_MANUAL_HOOK\
+extern bool ksu_init_rc_hook __read_mostly;\
+extern int ksu_handle_sys_read(unsigned int fd,\
+				char __user **buf_ptr, size_t *count_ptr);\
+#endif' fs/read_write.c
+
+          sed -i '/SYSCALL_DEFINE3(read, unsigned int, fd, char __user \*, buf, size_t, count)/,/^{/{
+            /^{/a\
+#ifdef CONFIG_KSU_MANUAL_HOOK\
+	if (unlikely(ksu_init_rc_hook))\
+		ksu_handle_sys_read(fd, \&buf, \&count);\
+#endif
+          }' fs/read_write.c 2>/dev/null || true
+
+          echo "  -> fs/read_write.c hooked"
+        else
+          echo "  -> fs/read_write.c already hooked"
+        fi
+
+        echo "=== [7/7] setuid hook (kernel/sys.c) ==="
+        if ! grep -q "ksu_handle_setresuid" kernel/sys.c; then
+          sed -i '/^SYSCALL_DEFINE3(setresuid, uid_t, ruid, uid_t, euid, uid_t, suid)/i\
+#ifdef CONFIG_KSU_MANUAL_HOOK\
+extern int ksu_handle_setresuid(uid_t ruid, uid_t euid, uid_t suid);\
+#endif' kernel/sys.c
+
+          sed -i '/SYSCALL_DEFINE3(setresuid.*suid)/,/^{/{
+            /^{/a\
+#ifdef CONFIG_KSU_MANUAL_HOOK\
+	(void)ksu_handle_setresuid(ruid, euid, suid);\
+#endif
+          }' kernel/sys.c 2>/dev/null || true
+
+          echo "  -> kernel/sys.c hooked"
+        else
+          echo "  -> kernel/sys.c already hooked"
+        fi
+
+        echo "=== Hook summary ==="
+        for f in fs/stat.c fs/exec.c fs/open.c kernel/reboot.c drivers/input/input.c fs/read_write.c kernel/sys.c; do
+          echo -n "$f: "
+          grep -c "CONFIG_KSU_MANUAL_HOOK" "$f" 2>/dev/null || echo "0"
+        done
 
     - name: Configure kernel
       run: |
         cd $GITHUB_WORKSPACE/kernel
         make O=out raphael_user_defconfig
         cd out
-        # Ensure KSU config is enabled
+        # ReSukiSU required configs for Non-GKI 4.14
         sed -i 's/.*CONFIG_KSU.*/CONFIG_KSU=y/' .config 2>/dev/null || \
           echo "CONFIG_KSU=y" >> .config
         grep -q "CONFIG_KSU_MANUAL_HOOK" .config || \
           echo "CONFIG_KSU_MANUAL_HOOK=y" >> .config
-        grep -q "CONFIG_OVERLAY_FS" .config || echo "CONFIG_OVERLAY_FS=y" >> .config
+        grep -q "CONFIG_OVERLAY_FS" .config || \
+          echo "CONFIG_OVERLAY_FS=y" >> .config
         grep -q "CONFIG_KALLSYMS_ALL" .config || \
           echo "CONFIG_KALLSYMS_ALL=y" >> .config
+        # Ensure KALLSYMS is enabled (prerequisite for KALLSYMS_ALL)
+        grep -q "CONFIG_KALLSYMS=y" .config || \
+          echo "CONFIG_KALLSYMS=y" >> .config
         make olddefconfig
         echo "=== KSU config ==="
-        grep -i "ksu\|kallsyms" .config
+        grep -iE "ksu|kallsyms|overlay" .config
 
     - name: Build kernel
       run: |
@@ -87,6 +303,23 @@ jobs:
           echo "--- Last 50 lines ---"
           tail -50 out/build.log
           exit 1
+        fi
+
+    - name: Verify KSU symbols
+      if: success()
+      run: |
+        cd $GITHUB_WORKSPACE/kernel
+        echo "=== KSU symbols in Image ==="
+        IMAGE="out/arch/arm64/boot/Image"
+        if [ -f "$IMAGE" ]; then
+          echo "File size: $(stat -c%s $IMAGE) bytes"
+          echo "--- Searching for KSU strings ---"
+          strings "$IMAGE" | grep -i "kernelsu\|ksu_\|CONFIG_KSU" | head -20 || echo "NO KSU SYMBOLS FOUND!"
+          KSU_COUNT=$(strings "$IMAGE" | grep -ic "kernelsu\|ksu_" || true)
+          echo "KSU-related strings found: $KSU_COUNT"
+          if [ "$KSU_COUNT" -eq 0 ]; then
+            echo "WARNING: No KSU symbols detected!"
+          fi
         fi
 
     - name: Upload build log
@@ -112,6 +345,6 @@ jobs:
     - uses: actions/upload-artifact@v4
       if: success()
       with:
-        name: SukiSU-Ultra-v4.1.3-Image-raphael
+        name: ReSukiSU-v4.1.3-Image-raphael
         path: Image.gz
         retention-days: 7
