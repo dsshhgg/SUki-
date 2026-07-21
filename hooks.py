@@ -46,9 +46,9 @@ patch_file('fs/stat.c', [
      ['#ifdef CONFIG_KSU_MANUAL_HOOK',
       '\tksu_handle_stat(&dfd, &filename, &flag);',
       '#endif']),
-    ('after', '\t\terror = cp_new_stat64(&stat, statbuf);',
+    ('after', '\tint error = vfs_fstat(fd, &stat);',
      ['#ifdef CONFIG_KSU_MANUAL_HOOK',
-      '\t\tksu_handle_fstat64_ret(&fd, &statbuf);',
+      '\tksu_handle_fstat64_ret(&fd, &statbuf);',
       '#endif']),
 ])
 
