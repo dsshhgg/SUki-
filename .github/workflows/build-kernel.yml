@@ -51,7 +51,7 @@ jobs:
       run: |
         cd $GITHUB_WORKSPACE/kernel
         git clone --depth=1 --single-branch --branch main \
-          https://github.com/rifsxd/KernelSU-Next KernelSU-Next
+          https://github.com/KernelSU-Next/KernelSU-Next KernelSU-Next
         cd drivers
         ln -sf ../KernelSU-Next/kernel kernelsu
         printf "\nobj-\$(CONFIG_KSU) += kernelsu/\n" >> Makefile
