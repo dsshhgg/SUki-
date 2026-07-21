@@ -26,8 +26,8 @@ jobs:
 
     - name: Clone kernel source
       run: |
-        git clone --depth=1 --single-branch --branch A14 \
-          https://github.com/zclkkk/kernel_xiaomi_sm8150 kernel
+        git clone --depth=1 --single-branch --branch raphael-p-oss \
+          https://github.com/raphael-ubports/kernel_xiaomi_raphael_stock kernel
         echo "Kernel version:"
         head -5 kernel/Makefile
 
@@ -37,14 +37,11 @@ jobs:
         for f in scripts/dtc/dtc-lexer.lex.c_shipped scripts/dtc/dtc-lexer.l; do
           [ -f "$f" ] && sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/' "$f"
         done
-        # Force Clang
-        if grep -q 'scripts/gcc-wrapper.py' Makefile 2>/dev/null; then
-          sed -i 's|^REAL_CC|#REAL_CC|' Makefile
-          sed -i 's|^CC.*=.*scripts/gcc-wrapper.py|CC = clang|' Makefile
-        fi
-        if grep -q '^CC.*=.*gcc' Makefile 2>/dev/null; then
-          sed -i 's|^CC.*=.*gcc|CC = clang|' Makefile
-        fi
+        # Bypass gcc-wrapper.py (Python 2)
+        sed -i 's|^REAL_CC|#REAL_CC|' Makefile
+        sed -i 's|^CC.*scripts/gcc-wrapper.py|CC = clang|' Makefile
+        # Fix PERL
+        grep -q '^PERL' Makefile && sed -i 's|^PERL.*|PERL = perl|' Makefile
         grep "^CC" Makefile | head -3 || true
 
     - name: Integrate SukiSU-Ultra old branch (4.14 compat)
@@ -60,7 +57,7 @@ jobs:
     - name: Configure kernel
       run: |
         cd $GITHUB_WORKSPACE/kernel
-        make O=out raphael_defconfig
+        make O=out raphael_user_defconfig
         cd out
         # Ensure KSU config is enabled
         sed -i 's/.*CONFIG_KSU.*/CONFIG_KSU=y/' .config 2>/dev/null || \
