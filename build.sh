@@ -1,6 +1,7 @@
 #!/bin/bash
 set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+export GIT_SSL_NO_VERIFY=true
 
 # === CONFIG ===
 KERNEL_DIR="$HOME/kernel_raphael"
@@ -65,7 +66,7 @@ sed -i '1s/^/#define fallthrough do {} while (0)\n/' "$DRIVER_DIR/kernelsu/allow
 echo ""
 echo "=== Step 4: Apply manual hooks ==="
 cp "$SCRIPT_DIR/hooks.py" hooks.py
-python3 hooks.py
+python hooks.py
 
 echo ""
 echo "=== Step 5: Configure kernel ==="
