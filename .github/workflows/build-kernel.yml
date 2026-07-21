@@ -47,12 +47,11 @@ jobs:
         fi
         grep "^CC" Makefile | head -3 || true
 
-    - name: Integrate SukiSU-Ultra
+    - name: Integrate KSU (original KernelSU for 4.14 compat)
       run: |
         cd $GITHUB_WORKSPACE/kernel
-        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" -o setup.sh
+        curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" -o setup.sh
         bash setup.sh || { echo "SETUP FAILED"; exit 1; }
-        cd $GITHUB_WORKSPACE/kernel
         ls drivers/kernelsu/Makefile || ls drivers/kernelsu/Kbuild || { echo "MISSING"; exit 1; }
 
     - name: Configure kernel
