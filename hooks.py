@@ -29,7 +29,7 @@ def patch_file(filepath, operations):
         print(f'  SKIP: {filepath} (no changes)')
     return modified
 
-# 1. fs/stat.c - hook newfstatat (unchanged)
+# 1. fs/stat.c - hook newfstatat + fstat64
 patch_file('fs/stat.c', [
     ('before', '#if !defined(__ARCH_WANT_STAT64) || defined(__ARCH_WANT_SYS_NEWFSTATAT)',
      ['#ifdef CONFIG_KSU_MANUAL_HOOK',
@@ -37,11 +37,18 @@ patch_file('fs/stat.c', [
       'extern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);',
       '',
       'extern void ksu_handle_newfstat_ret(unsigned int *fd, struct stat __user **statbuf_ptr);',
+      '#if defined(__ARCH_WANT_STAT64) || defined(__ARCH_WANT_COMPAT_STAT64)',
+      'extern void ksu_handle_fstat64_ret(unsigned long *fd, struct stat64 __user **statbuf_ptr);',
+      '#endif',
       '#endif',
       '']),
     ('before', '\terror = vfs_fstatat(dfd, filename, &stat, flag);',
      ['#ifdef CONFIG_KSU_MANUAL_HOOK',
       '\tksu_handle_stat(&dfd, &filename, &flag);',
+      '#endif']),
+    ('after', '\t\terror = cp_new_stat64(&stat, statbuf);',
+     ['#ifdef CONFIG_KSU_MANUAL_HOOK',
+      '\t\tksu_handle_fstat64_ret(&fd, &statbuf);',
       '#endif']),
 ])
 
