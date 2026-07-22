@@ -68,6 +68,8 @@ jobs:
 
         sed -i 's|MODULE_IMPORT_NS|//MODULE_IMPORT_NS|g' "$DRIVER_DIR/kernelsu/ksu.c" 2>/dev/null || true
         sed -i '1s/^/#define fallthrough do {} while (0)\n/' "$DRIVER_DIR/kernelsu/allowlist.c" 2>/dev/null || true
+        # Fix current_sid conflict with kernel's SELinux objsec.h
+        sed -i 's/current_sid/ksu_current_sid/g' "$DRIVER_DIR/kernelsu/feature/selinux_hide.c" 2>/dev/null || true
 
     - name: Apply manual hooks (4.14 Non-GKI)
       run: |
