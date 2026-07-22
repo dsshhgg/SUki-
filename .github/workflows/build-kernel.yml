@@ -48,6 +48,8 @@ jobs:
         sed -i 's/LDFLAGS_vmlinux\s*:=.*/LDFLAGS_vmlinux := --no-undefined -X/' arch/arm64/Makefile
         # LLD does not allow -shared and -pie together, and needs --no-dynamic-linker
         sed -i 's/-pie -shared/-pie --no-dynamic-linker/' arch/arm64/Makefile
+        # Force LLD to produce output despite relocation warnings
+        sed -i 's/LDFLAGS_vmlinux\s*:=.*/& --noinhibit-exec/' arch/arm64/Makefile
         grep "^CC" Makefile | head -3 || true
 
     - name: Integrate ReSukiSU (Non-GKI 4.14)
