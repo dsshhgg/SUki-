@@ -47,7 +47,7 @@ jobs:
         # Remove -p linker flag (GNU ld only, not supported by LLD)
         sed -i 's/LDFLAGS_vmlinux\s*:=.*/LDFLAGS_vmlinux := --no-undefined -X/' arch/arm64/Makefile
         # LLD does not allow -shared and -pie together
-        sed -i 's/-pie -shared/-shared/' arch/arm64/Makefile
+        sed -i 's/-pie -shared/-pie/' arch/arm64/Makefile
         grep "^CC" Makefile | head -3 || true
 
     - name: Integrate ReSukiSU (Non-GKI 4.14)
