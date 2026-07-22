@@ -54,6 +54,8 @@ jobs:
         # Patch out aggressive compile-time copy_size checks (breaks old QCOM drivers)
         sed -i 's/__bad_copy_to();/do {} while(0);/g' include/linux/thread_info.h 2>/dev/null || true
         sed -i 's/__bad_copy_from();/do {} while(0);/g' include/linux/thread_info.h 2>/dev/null || true
+        # Fix SELinux AF_MAX check for newer network protocols
+        sed -i '/#error New address family defined, please update secclass_map/ s|#error|// #error|' security/selinux/include/classmap.h 2>/dev/null || true
         echo "[+] Compatibility fixes applied"
 
     - name: Integrate ReSukiSU
