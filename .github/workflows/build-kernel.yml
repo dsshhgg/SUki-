@@ -108,10 +108,12 @@ jobs:
         grep -q "CONFIG_IMG_GZ_DTB" .config || \
           echo "CONFIG_IMG_GZ_DTB=y" >> .config
         sed -i 's/.*CONFIG_BUILD_ARM64_UNCOMPRESSED_KERNEL.*/CONFIG_BUILD_ARM64_UNCOMPRESSED_KERNEL=y/' .config
-        # Disable FORTIFY_SOURCE (breaks old drivers with new compilers)
-        grep -q "CONFIG_FORTIFY_SOURCE" .config 2>/dev/null && \
-          sed -i 's/.*CONFIG_FORTIFY_SOURCE.*/# CONFIG_FORTIFY_SOURCE is not set/' .config || \
-          echo "# CONFIG_FORTIFY_SOURCE is not set" >> .config
+        # Disable hardening checks (breaks old QCOM drivers with new compilers)
+        for cfg in FORTIFY_SOURCE HARDENED_USERCOPY; do
+          grep -q "CONFIG_${cfg}" .config 2>/dev/null && \
+            sed -i "s/.*CONFIG_${cfg}.*/# CONFIG_${cfg} is not set/" .config || \
+            echo "# CONFIG_${cfg} is not set" >> .config
+        done
         make olddefconfig
         echo "=== KSU config ==="
         grep -iE "ksu|kallsyms|overlay" .config
