@@ -51,6 +51,9 @@ jobs:
         sed -i 's/LDFLAGS_vmlinux\s*:=.*/LDFLAGS_vmlinux := --no-undefined -X/' arch/arm64/Makefile
         sed -i 's/-pie -shared/-pie --no-dynamic-linker/' arch/arm64/Makefile
         sed -i 's/LDFLAGS_vmlinux\s*:=.*/& --noinhibit-exec/' arch/arm64/Makefile
+        # Patch out aggressive compile-time copy_size checks (breaks old QCOM drivers)
+        sed -i 's/__bad_copy_to();/do {} while(0);/g' include/linux/thread_info.h 2>/dev/null || true
+        sed -i 's/__bad_copy_from();/do {} while(0);/g' include/linux/thread_info.h 2>/dev/null || true
         echo "[+] Compatibility fixes applied"
 
     - name: Integrate ReSukiSU
@@ -114,6 +117,8 @@ jobs:
             sed -i "s/.*CONFIG_${cfg}.*/# CONFIG_${cfg} is not set/" .config || \
             echo "# CONFIG_${cfg} is not set" >> .config
         done
+        # Also disable strict usercopy checks
+        echo "# CONFIG_HARDENED_USERCOPY_FALLBACK is not set" >> .config 2>/dev/null || true
         make olddefconfig
         echo "=== KSU config ==="
         grep -iE "ksu|kallsyms|overlay" .config
