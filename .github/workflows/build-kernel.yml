@@ -170,3 +170,46 @@ jobs:
         name: ReSukiSU-v4.1.3-Image-raphael
         path: Image.gz
         retention-days: 7
+
+    - name: Create AnyKernel3 flashable zip
+      if: success()
+      run: |
+        cd $GITHUB_WORKSPACE
+        # Clone AnyKernel3
+        git clone --depth=1 https://github.com/osm0sis/AnyKernel3 ak3
+        cd ak3
+        # Remove unnecessary files
+        rm -rf .git README.md LICENSE *.md
+        # Copy our kernel image
+        cp ../Image.gz Image.gz
+        # Patch anykernel.sh for our device
+        cat > anykernel.sh << 'AKSH'
+# AnyKernel3 Ramdisk Mod
+# https://github.com/osm0sis/AnyKernel3
+
+## AnyKernel setup
+properties={
+kernel.string=ReSukiSU for raphael (Redmi K20 Pro)
+do.devicecheck=1
+device.name1=raphael
+device.name2=raphaelin
+block=/dev/block/bootdevice/by-name/boot;
+is_slot_device=1;
+ramdisk_compression=auto;
+patch_vbmeta_device=auto;
+}
+
+# shell variables
+boot_dev=/dev/block/bootdevice/by-name/boot;
+AKSH
+        # Create flashable zip
+        zip -r9 ../ReSukiSU-v4.1.3-raphael-flashable.zip . -x '*.git*'
+        echo "Flashable zip created:"
+        ls -la ../ReSukiSU-v4.1.3-raphael-flashable.zip
+
+    - uses: actions/upload-artifact@v4
+      if: success()
+      with:
+        name: ReSukiSU-v4.1.3-raphael-flashable
+        path: ReSukiSU-v4.1.3-raphael-flashable.zip
+        retention-days: 7
