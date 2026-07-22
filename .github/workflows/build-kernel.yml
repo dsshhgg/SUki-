@@ -195,18 +195,28 @@ jobs:
         cd ak3
         rm -rf .git README.md LICENSE *.md
         cp ../Image.gz-dtb Image.gz-dtb
-        printf '# AnyKernel3 Ramdisk Mod\n# https://github.com/osm0sis/AnyKernel3\n\nproperties=' > anykernel.sh
-        printf '{\n' >> anykernel.sh
+        printf '# AnyKernel3 Ramdisk Mod\n# https://github.com/osm0sis/AnyKernel3\n' > anykernel.sh
+        printf '\n## AnyKernel setup\n' >> anykernel.sh
+        printf '# begin properties\n' >> anykernel.sh
+        printf 'properties(){\n' >> anykernel.sh
         printf 'kernel.string=ReSukiSU for raphael (Redmi K20 Pro)\n' >> anykernel.sh
         printf 'do.devicecheck=1\n' >> anykernel.sh
         printf 'device.name1=raphael\n' >> anykernel.sh
         printf 'device.name2=raphaelin\n' >> anykernel.sh
-        printf 'block=/dev/block/bootdevice/by-name/boot;\n' >> anykernel.sh
-        printf 'is_slot_device=1;\n' >> anykernel.sh
-        printf 'ramdisk_compression=auto;\n' >> anykernel.sh
-        printf 'patch_vbmeta_device=auto;\n' >> anykernel.sh
-        printf '}\n\n' >> anykernel.sh
-        printf "boot_dev=/dev/block/bootdevice/by-name/boot;\n" >> anykernel.sh
+        printf '}\n' >> anykernel.sh
+        printf '# end properties\n' >> anykernel.sh
+        printf '\n# shell variables\n' >> anykernel.sh
+        printf 'block=/dev/block/bootdevice/by-name/boot\n' >> anykernel.sh
+        printf 'is_slot_device=0\n' >> anykernel.sh
+        printf 'ramdisk_compression=auto\n' >> anykernel.sh
+        printf '\n## AnyKernel methods (DO NOT CHANGE)\n' >> anykernel.sh
+        printf '. tools/ak3-core.sh\n' >> anykernel.sh
+        printf '\n## AnyKernel boot install\n' >> anykernel.sh
+        printf 'dump_boot\n' >> anykernel.sh
+        printf '\n# begin ramdisk changes\n' >> anykernel.sh
+        printf '\n# end ramdisk changes\n' >> anykernel.sh
+        printf '\nwrite_boot\n' >> anykernel.sh
+        printf '## end boot install\n' >> anykernel.sh
         zip -r9 ../ReSukiSU-v4.1.3-raphael-flashable.zip . -x '*.git*'
         echo "Flashable zip created:"
         ls -la ../ReSukiSU-v4.1.3-raphael-flashable.zip
