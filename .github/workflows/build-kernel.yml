@@ -93,12 +93,6 @@ jobs:
         cd $GITHUB_WORKSPACE/kernel
         make O=out raphael_user_defconfig
         cd out
-        # Merge device config
-        ../scripts/kconfig/merge_config.sh .config ../arch/arm64/configs/device_config 2>/dev/null || \
-          ../scripts/kconfig/merge_config.sh -m .config ../arch/arm64/configs/device_config
-        # Ensure uncompressed kernel (matches stock boot.img format)
-        sed -i 's/.*CONFIG_BUILD_ARM64_UNCOMPRESSED_KERNEL.*/CONFIG_BUILD_ARM64_UNCOMPRESSED_KERNEL=y/' .config
-        sed -i 's/.*CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE.*/CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE=y/' .config
         # Add KSU configs
         sed -i 's/.*CONFIG_KSU.*/CONFIG_KSU=y/' .config 2>/dev/null || \
           echo "CONFIG_KSU=y" >> .config
@@ -117,8 +111,6 @@ jobs:
         make olddefconfig
         echo "=== KSU config ==="
         grep -iE "ksu|kallsyms|overlay" .config
-        echo "=== DTB config ==="
-        grep -i "dtb\|uncompressed" .config
 
     - name: Build kernel
       run: |
