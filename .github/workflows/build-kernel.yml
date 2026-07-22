@@ -44,6 +44,8 @@ jobs:
         grep -q '^PERL' Makefile && sed -i 's|^PERL.*|PERL = perl|' Makefile
         # Disable unused-but-set-variable warning as error (clang 18+ with 4.14 kernel)
         sed -i '/^KBUILD_CFLAGS.*Werror=date-time/a KBUILD_CFLAGS += -Wno-error=unused-but-set-variable' Makefile
+        # Remove -p linker flag (GNU ld only, not supported by LLD)
+        sed -i 's/LDFLAGS_vmlinux\s*:=.*/LDFLAGS_vmlinux := --no-undefined -X/' arch/arm64/Makefile
         grep "^CC" Makefile | head -3 || true
 
     - name: Integrate ReSukiSU (Non-GKI 4.14)
