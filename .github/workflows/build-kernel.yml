@@ -42,6 +42,8 @@ jobs:
         sed -i 's|^REAL_CC|#REAL_CC|' Makefile
         sed -i 's|^CC.*scripts/gcc-wrapper.py|CC = clang|' Makefile
         grep -q '^PERL' Makefile && sed -i 's|^PERL.*|PERL = perl|' Makefile
+        # Disable unused-but-set-variable warning as error (clang 18+ with 4.14 kernel)
+        sed -i '/^KBUILD_CFLAGS.*Werror=date-time/a KBUILD_CFLAGS += -Wno-error=unused-but-set-variable' Makefile
         grep "^CC" Makefile | head -3 || true
 
     - name: Integrate ReSukiSU (Non-GKI 4.14)
