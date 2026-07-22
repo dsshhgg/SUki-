@@ -28,10 +28,15 @@ jobs:
 
     - name: Clone kernel source
       run: |
-        git clone --depth=1 --single-branch --branch raphael-p-oss \
-          https://github.com/raphael-ubports/kernel_xiaomi_raphael_stock kernel
+        git clone --depth=1 --single-branch --branch master \
+          https://github.com/zclkkk/kernel_xiaomi_sm8150 kernel
         echo "Kernel version:"
         head -5 kernel/Makefile
+
+    - name: Copy device config
+      run: |
+        cp $GITHUB_WORKSPACE/device_config kernel/arch/arm64/configs/device_config
+        echo "[+] Device config copied"
 
     - name: Fix compatibility
       run: |
@@ -42,17 +47,13 @@ jobs:
         sed -i 's|^REAL_CC|#REAL_CC|' Makefile
         sed -i 's|^CC.*scripts/gcc-wrapper.py|CC = clang|' Makefile
         grep -q '^PERL' Makefile && sed -i 's|^PERL.*|PERL = perl|' Makefile
-        # Disable unused-but-set-variable warning as error (clang 18+ with 4.14 kernel)
         sed -i '/^KBUILD_CFLAGS.*Werror=date-time/a KBUILD_CFLAGS += -Wno-error=unused-but-set-variable' Makefile
-        # Remove -p linker flag (GNU ld only, not supported by LLD)
         sed -i 's/LDFLAGS_vmlinux\s*:=.*/LDFLAGS_vmlinux := --no-undefined -X/' arch/arm64/Makefile
-        # LLD does not allow -shared and -pie together, and needs --no-dynamic-linker
         sed -i 's/-pie -shared/-pie --no-dynamic-linker/' arch/arm64/Makefile
-        # Force LLD to produce output despite relocation warnings
         sed -i 's/LDFLAGS_vmlinux\s*:=.*/& --noinhibit-exec/' arch/arm64/Makefile
-        grep "^CC" Makefile | head -3 || true
+        echo "[+] Compatibility fixes applied"
 
-    - name: Integrate ReSukiSU (Non-GKI 4.14)
+    - name: Integrate ReSukiSU
       run: |
         cd $GITHUB_WORKSPACE/kernel
         git clone --depth=1 https://github.com/ReSukiSU/ReSukiSU KernelSU
@@ -64,24 +65,20 @@ jobs:
           DRIVER_DIR="drivers"
         fi
         ln -sf "$(realpath --relative-to="$DRIVER_DIR" "$(pwd)/KernelSU/kernel")" "$DRIVER_DIR/kernelsu"
-        echo "[+] Symlink created"
 
         grep -q "kernelsu" "$DRIVER_DIR/Makefile" || \
           printf "\nobj-\$(CONFIG_KSU) += kernelsu/\n" >> "$DRIVER_DIR/Makefile"
-        echo "[+] Makefile updated"
 
         grep -q "kernelsu" "$DRIVER_DIR/Kconfig" || \
           sed -i '/^endmenu/i\source "drivers/kernelsu/Kconfig"' "$DRIVER_DIR/Kconfig"
-        echo "[+] Kconfig updated"
 
         sed -i 's|MODULE_IMPORT_NS|//MODULE_IMPORT_NS|g' "$DRIVER_DIR/kernelsu/ksu.c" 2>/dev/null || true
         sed -i '1s/^/#define fallthrough do {} while (0)\n/' "$DRIVER_DIR/kernelsu/allowlist.c" 2>/dev/null || true
-        # Fix current_sid conflict with kernel's SELinux objsec.h
         sed -i 's/current_sid/ksu_current_sid/g' "$DRIVER_DIR/kernelsu/feature/selinux_hide.c" 2>/dev/null || true
-        # Fix selinux_disabled -> selinux_enabled for 4.14 kernel
         sed -i 's/(selinux_disabled)/(!selinux_enabled)/g' "$DRIVER_DIR/kernelsu/selinux/selinux_defs.h" 2>/dev/null || true
+        echo "[+] ReSukiSU integrated"
 
-    - name: Apply manual hooks (4.14 Non-GKI)
+    - name: Apply manual hooks
       run: |
         cp $GITHUB_WORKSPACE/hooks.py $GITHUB_WORKSPACE/kernel/hooks.py
         cd $GITHUB_WORKSPACE/kernel && python3 hooks.py
@@ -89,8 +86,12 @@ jobs:
     - name: Configure kernel
       run: |
         cd $GITHUB_WORKSPACE/kernel
-        make O=out raphael_user_defconfig
+        make O=out raphael_defconfig
         cd out
+        # Merge device config
+        ../scripts/kconfig/merge_config.sh .config ../arch/arm64/configs/device_config 2>/dev/null || \
+          ../scripts/kconfig/merge_config.sh -m .config ../arch/arm64/configs/device_config
+        # Add KSU configs
         sed -i 's/.*CONFIG_KSU.*/CONFIG_KSU=y/' .config 2>/dev/null || \
           echo "CONFIG_KSU=y" >> .config
         grep -q "CONFIG_KSU_MANUAL_HOOK" .config || \
@@ -99,20 +100,28 @@ jobs:
           echo "CONFIG_OVERLAY_FS=y" >> .config
         grep -q "CONFIG_KALLSYMS_ALL" .config || \
           echo "CONFIG_KALLSYMS_ALL=y" >> .config
-        grep -q "CONFIG_KALLSYMS=y" .config || \
+        grep -q "CONFIG_KALLSYMS" .config || \
           echo "CONFIG_KALLSYMS=y" >> .config
+        # Ensure DTB append is enabled for boot partition flash
+        grep -q "CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE" .config || \
+          echo "CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE=y" >> .config
+        grep -q "CONFIG_IMG_GZ_DTB" .config || \
+          echo "CONFIG_IMG_GZ_DTB=y" >> .config
+        sed -i 's/.*CONFIG_BUILD_ARM64_UNCOMPRESSED_KERNEL.*/CONFIG_BUILD_ARM64_UNCOMPRESSED_KERNEL=y/' .config
         make olddefconfig
         echo "=== KSU config ==="
         grep -iE "ksu|kallsyms|overlay" .config
+        echo "=== DTB config ==="
+        grep -i "dtb" .config
 
     - name: Build kernel
       run: |
         cd $GITHUB_WORKSPACE/kernel
         set -o pipefail
-        make O=out Image -j$(nproc) \
+        make O=out Image.gz-dtb -j$(nproc) \
           LD=ld.lld KCFLAGS="-Wno-error" 2>&1 | tee out/build.log
         echo "===== RESULT ====="
-        if [ -f out/arch/arm64/boot/Image ]; then
+        if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
           echo "BUILD SUCCESS"
           ls -la out/arch/arm64/boot/Image*
         else
@@ -129,19 +138,16 @@ jobs:
       continue-on-error: true
       run: |
         cd $GITHUB_WORKSPACE/kernel
-        echo "=== KSU symbols in Image ==="
-        IMAGE="out/arch/arm64/boot/Image"
+        IMAGE="out/arch/arm64/boot/Image.gz-dtb"
         if [ -f "$IMAGE" ]; then
           echo "File size: $(stat -c%s $IMAGE) bytes"
           echo "--- Searching for KSU strings ---"
-          strings "$IMAGE" | grep -i "kernelsu\|ksu_\|CONFIG_KSU" | head -20 || echo "NO KSU SYMBOLS FOUND!"
-          KSU_COUNT=$(strings "$IMAGE" | grep -ic "kernelsu\|ksu_" || true)
+          zcat "$IMAGE" 2>/dev/null | strings | grep -i "kernelsu\|ksu_\|CONFIG_KSU" | head -20 || \
+            strings "$IMAGE" | grep -i "kernelsu\|ksu_\|CONFIG_KSU" | head -20 || echo "NO KSU SYMBOLS FOUND!"
+          KSU_COUNT=$(zcat "$IMAGE" 2>/dev/null | strings | grep -ic "kernelsu\|ksu_" || strings "$IMAGE" | grep -ic "kernelsu\|ksu_" || true)
           echo "KSU-related strings found: $KSU_COUNT"
-          if [ "$KSU_COUNT" -eq 0 ]; then
-            echo "WARNING: No KSU symbols detected!"
-          fi
         else
-          echo "Image not found at $IMAGE"
+          echo "Image.gz-dtb not found at $IMAGE"
         fi
 
     - name: Copy build log
@@ -156,38 +162,32 @@ jobs:
         path: build.log
         retention-days: 3
 
-    - name: Compress Image
+    - name: Copy kernel image
       if: success()
       run: |
         cd $GITHUB_WORKSPACE
-        cp kernel/out/arch/arm64/boot/Image Image
-        gzip -f -9 Image
-        ls -la Image.gz
+        cp kernel/out/arch/arm64/boot/Image.gz-dtb Image.gz-dtb
+        ls -la Image.gz-dtb
 
     - uses: actions/upload-artifact@v4
       if: success()
       with:
-        name: ReSukiSU-v4.1.3-Image-raphael
-        path: Image.gz
+        name: ReSukiSU-v4.1.3-Image-gz-dtb-raphael
+        path: Image.gz-dtb
         retention-days: 7
 
     - name: Create AnyKernel3 flashable zip
       if: success()
       run: |
         cd $GITHUB_WORKSPACE
-        # Clone AnyKernel3
         git clone --depth=1 https://github.com/osm0sis/AnyKernel3 ak3
         cd ak3
-        # Remove unnecessary files
         rm -rf .git README.md LICENSE *.md
-        # Copy our kernel image
-        cp ../Image.gz Image.gz
-        # Patch anykernel.sh for our device
+        cp ../Image.gz-dtb Image.gz-dtb
         cat > anykernel.sh << 'AKSH'
 # AnyKernel3 Ramdisk Mod
 # https://github.com/osm0sis/AnyKernel3
 
-## AnyKernel setup
 properties={
 kernel.string=ReSukiSU for raphael (Redmi K20 Pro)
 do.devicecheck=1
@@ -199,10 +199,8 @@ ramdisk_compression=auto;
 patch_vbmeta_device=auto;
 }
 
-# shell variables
 boot_dev=/dev/block/bootdevice/by-name/boot;
 AKSH
-        # Create flashable zip
         zip -r9 ../ReSukiSU-v4.1.3-raphael-flashable.zip . -x '*.git*'
         echo "Flashable zip created:"
         ls -la ../ReSukiSU-v4.1.3-raphael-flashable.zip
